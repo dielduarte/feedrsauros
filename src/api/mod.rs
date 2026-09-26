@@ -4,10 +4,12 @@ mod feeds;
 mod folders;
 mod items;
 mod opml;
+mod settings;
 mod web;
 
 use axum::Router;
 use axum::routing::{get, patch, post, put};
+use url::Url;
 
 use crate::db::Db;
 use crate::fetch::Fetcher;
@@ -20,6 +22,8 @@ pub struct AppState {
     pub db: Db,
     pub fetcher: Fetcher,
     pub poller: PollerHandle,
+    /// Where Jev is asked for judgments; tests point it at a stand-in.
+    pub typesafe: Url,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -47,6 +51,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/items", get(items::list))
         .route("/api/items/mark-read", post(items::mark_read))
         .route("/api/opml", get(opml::export).post(opml::import_file))
+        .route("/api/settings", get(settings::show))
+        .route(
+            "/api/settings/api-key",
+            put(settings::save_api_key).delete(settings::remove_api_key),
+        )
+        .route("/api/settings/ai", put(settings::set_ai))
         .fallback(web::serve)
         .with_state(state)
 }

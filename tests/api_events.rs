@@ -57,6 +57,7 @@ async fn streams_poller_events_to_the_browser() {
         db: db.clone(),
         fetcher,
         poller: poller.clone(),
+        typesafe: "http://127.0.0.1:9/".parse().unwrap(),
     }))
     .await;
 

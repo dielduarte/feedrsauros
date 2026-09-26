@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
 use url::Url;
 
-use crate::db::{Db, DbError, NewFeed};
+use crate::db::{Db, DbError, Folder, NewFeed};
 use crate::discover::{COMMON_FEED_PATHS, feed_links};
 use crate::fetch::{FetchError, Fetched, Fetcher};
+use crate::jev::FolderPicker;
 use crate::model::{FeedId, FolderId, Validators};
 use crate::parse::{ParsedFeed, parse};
 use crate::schedule::POLL_INTERVAL;
@@ -15,6 +16,16 @@ pub struct Added {
     pub slug: String,
     pub title: String,
     pub new_items: u64,
+    /// Slug of the folder Jev put the feed in, if it chose one.
+    pub ai_folder: Option<String>,
+}
+
+/// Where a new feed goes.
+pub enum Placement<'a> {
+    Folder(FolderId),
+    Unfiled,
+    /// The folder Jev judges best, or unfiled if none fits or Jev can't be reached.
+    BestFit(&'a FolderPicker),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -55,12 +66,12 @@ pub async fn add_feed(
     db: &Db,
     fetcher: &Fetcher,
     url: &Url,
-    folder: Option<FolderId>,
+    placement: Placement<'_>,
     now: DateTime<Utc>,
 ) -> Result<Added, AddFeedError> {
     let page = fetcher.fetch_page(url, now).await?;
     if let Ok(feed) = parse(&page.body, &page.url, now) {
-        return subscribe(db, page.url, feed, page.validators, folder, now).await;
+        return subscribe(db, page.url, feed, page.validators, placement, now).await;
     }
 
     let html = String::from_utf8_lossy(&page.body);
@@ -81,7 +92,7 @@ pub async fn add_feed(
         }) = fetcher.fetch(&candidate, &Validators::default(), now).await
         {
             feed.site_url.get_or_insert(page.url.clone());
-            return subscribe(db, candidate, feed, validators, folder, now).await;
+            return subscribe(db, candidate, feed, validators, placement, now).await;
         }
     }
     Err(AddFeedError::NoFeedFound)
@@ -92,9 +103,17 @@ async fn subscribe(
     url: Url,
     feed: ParsedFeed,
     validators: Validators,
-    folder: Option<FolderId>,
+    placement: Placement<'_>,
     now: DateTime<Utc>,
 ) -> Result<Added, AddFeedError> {
+    let (folder, ai_folder) = match placement {
+        Placement::Folder(id) => (Some(id), None),
+        Placement::Unfiled => (None, None),
+        Placement::BestFit(picker) => match best_fit(db, picker, &feed, &url).await? {
+            Some(folder) => (Some(folder.id), Some(folder.slug)),
+            None => (None, None),
+        },
+    };
     let new = NewFeed {
         url,
         title: feed.title.clone(),
@@ -109,5 +128,26 @@ async fn subscribe(
         slug: stored.slug,
         title: feed.title,
         new_items,
+        ai_folder,
     })
+}
+
+/// Adding a feed never fails because of AI: if Jev can't help, the feed is simply left unfiled.
+async fn best_fit(
+    db: &Db,
+    picker: &FolderPicker,
+    feed: &ParsedFeed,
+    url: &Url,
+) -> Result<Option<Folder>, AddFeedError> {
+    let folders = db.sidebar().await?.folders;
+    if folders.is_empty() {
+        return Ok(None);
+    }
+    match picker.pick(&folders, feed, url).await {
+        Ok(folder) => Ok(folder),
+        Err(error) => {
+            tracing::warn!(%error, "could not ask Jev for a folder");
+            Ok(None)
+        }
+    }
 }

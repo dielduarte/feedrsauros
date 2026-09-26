@@ -53,6 +53,14 @@ export interface Added {
   slug: string
   title: string
   new_items: number
+  /** Slug of the folder Jev filed the feed under, if it picked one. */
+  ai_folder: string | null
+}
+
+/** The API key itself never reaches the browser, only its last characters. */
+export interface Settings {
+  ai_enabled: boolean
+  api_key: { hint: string } | null
 }
 
 export interface ImportReport {
@@ -120,6 +128,10 @@ export function listsUnreadOnly(scope: Scope, unreadOnly: boolean): boolean {
 
 export const api = {
   sidebar: () => request<Sidebar>('GET', '/api/sidebar'),
+  settings: () => request<Settings>('GET', '/api/settings'),
+  saveApiKey: (key: string) => request<void>('PUT', '/api/settings/api-key', { key }),
+  removeApiKey: () => request<void>('DELETE', '/api/settings/api-key'),
+  setAi: (enabled: boolean) => request<void>('PUT', '/api/settings/ai', { enabled }),
 
   items(scope: Scope, unreadOnly: boolean, cursor: string | null) {
     const query = new URLSearchParams()

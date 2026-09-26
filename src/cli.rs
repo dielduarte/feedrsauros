@@ -8,9 +8,10 @@ use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 use tokio::sync::broadcast::{self, error::RecvError};
 
-use crate::add_feed::{add_feed, parse_input};
+use crate::add_feed::{Placement, add_feed, parse_input};
 use crate::db::{Db, SidebarFeed};
 use crate::fetch::{DEFAULT_TIMEOUT, Fetcher};
+use crate::jev::{self, FolderPicker};
 use crate::model::FeedScope;
 use crate::opml;
 use crate::poller::{BatchHealth, PollerEvent, run_batch};
@@ -136,14 +137,20 @@ async fn shutdown_signal() {
 
 async fn add(db: Db, input: &str, folder: Option<String>) -> anyhow::Result<()> {
     let url = parse_input(input).with_context(|| format!("not a web address: {input}"))?;
-    let folder = match folder {
-        Some(name) => Some(db.ensure_folder(&name).await?.id),
-        None => None,
+    let picker = FolderPicker::from_settings(&db, jev::ENDPOINT.parse()?).await?;
+    let placement = match (folder, &picker) {
+        (Some(name), _) => Placement::Folder(db.ensure_folder(&name).await?.id),
+        (None, Some(picker)) => Placement::BestFit(picker),
+        (None, None) => Placement::Unfiled,
     };
     let fetcher = Fetcher::new(DEFAULT_TIMEOUT);
-    let added = add_feed(&db, &fetcher, &url, folder, Utc::now()).await?;
+    let added = add_feed(&db, &fetcher, &url, placement, Utc::now()).await?;
+    let filed = match &added.ai_folder {
+        Some(folder) => format!(", filed under {folder} by Jev"),
+        None => String::new(),
+    };
     println!(
-        "Added {} ({})",
+        "Added {} ({}{filed})",
         added.title,
         plural(added.new_items, "new item")
     );

@@ -2,6 +2,7 @@ mod feeds;
 mod folders;
 mod items;
 mod polling;
+mod settings;
 mod sidebar;
 
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 pub use feeds::{Feed, FetchRecord, NewFeed};
 pub use folders::Folder;
 pub use items::{Cursor, Item, ItemQuery, ItemScope, ItemSummary, Page};
+pub use settings::Settings;
 pub use sidebar::{Sidebar, SidebarFeed, SidebarFolder};
 
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +29,8 @@ pub enum DbError {
     Sqlx(sqlx::Error),
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error(transparent)]
+    Secret(#[from] crate::secrets::VaultError),
 }
 
 impl From<sqlx::Error> for DbError {

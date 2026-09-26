@@ -17,6 +17,7 @@ import { type ArticleRef, articleKey, scopePath, type Scope } from './routes'
 
 export const keys = {
   sidebar: ['sidebar'] as const,
+  settings: ['settings'] as const,
   poller: ['poller'] as const,
   allItems: ['items'] as const,
   items: (scope: Scope, unreadOnly: boolean) => ['items', scopePath(scope), unreadOnly] as const,
@@ -36,6 +37,28 @@ export function useSidebarData() {
     [query.data, adding],
   )
   return { ...query, data }
+}
+
+export function useSettings() {
+  return useQuery({ queryKey: keys.settings, queryFn: api.settings })
+}
+
+/** A settings change; settings reload once the server has it. */
+function useSettingsMutation<Args>(run: (args: Args) => Promise<void>) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: run,
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.settings }),
+    onError: (error) => toast.error(sentence(error.message)),
+  })
+}
+
+export function useSettingsActions() {
+  return {
+    saveApiKey: useSettingsMutation(api.saveApiKey),
+    removeApiKey: useSettingsMutation(() => api.removeApiKey()),
+    setAi: useSettingsMutation(api.setAi),
+  }
 }
 
 export function useLookup(sidebar: Sidebar | undefined) {

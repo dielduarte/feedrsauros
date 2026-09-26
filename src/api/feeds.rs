@@ -5,7 +5,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use super::{ApiError, AppState};
-use crate::add_feed::{Added, add_feed, parse_input};
+use crate::add_feed::{Added, Placement, add_feed, parse_input};
+use crate::jev::FolderPicker;
 use crate::model::FeedScope;
 
 #[derive(Deserialize)]
@@ -21,11 +22,13 @@ pub async fn subscribe(
 ) -> Result<(StatusCode, Json<Added>), ApiError> {
     let url = parse_input(&body.url)
         .ok_or_else(|| ApiError::BadRequest(format!("not a web address: {}", body.url)))?;
-    let folder = match body.folder {
-        Some(slug) => Some(state.db.folder_id(&slug).await?),
-        None => None,
+    let picker = FolderPicker::from_settings(&state.db, state.typesafe.clone()).await?;
+    let placement = match (body.folder, &picker) {
+        (Some(slug), _) => Placement::Folder(state.db.folder_id(&slug).await?),
+        (None, Some(picker)) => Placement::BestFit(picker),
+        (None, None) => Placement::Unfiled,
     };
-    let added = add_feed(&state.db, &state.fetcher, &url, folder, Utc::now()).await?;
+    let added = add_feed(&state.db, &state.fetcher, &url, placement, Utc::now()).await?;
     Ok((StatusCode::CREATED, Json(added)))
 }
 

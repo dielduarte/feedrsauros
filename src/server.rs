@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::api::{self, AppState};
 use crate::db::Db;
 use crate::fetch::{DEFAULT_TIMEOUT, Fetcher};
+use crate::jev;
 use crate::poller::{self, PollerHandle};
 
 /// The web API and poller, running in the background. Shared by `feedrsauros serve` and the
@@ -30,6 +31,9 @@ pub async fn start(db: Db, listener: TcpListener) -> anyhow::Result<Server> {
         db,
         fetcher,
         poller: poller.clone(),
+        typesafe: jev::ENDPOINT
+            .parse()
+            .expect("the TypeSafe endpoint is a valid URL"),
     });
     let stopping = cancel.clone();
     let task = tokio::spawn(async move {

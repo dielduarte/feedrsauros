@@ -25,9 +25,11 @@ type Props = {
   crumb?: string | null
   /** Page-specific actions, placed before the refresh control. */
   children?: ReactNode
+  /** Shown instead of the list switcher, on pages that aren't a list. */
+  title?: string
 }
 
-export function TopBar({ chrome, onBack, crumb, children }: Props) {
+export function TopBar({ chrome, onBack, crumb, children, title }: Props) {
   const { state, isMobile } = useSidebar()
   const sidebarHidden = state === 'collapsed' || isMobile
 
@@ -48,7 +50,11 @@ export function TopBar({ chrome, onBack, crumb, children }: Props) {
             <ArrowLeft />
           </IconAction>
         ) : null}
-        <ScopeSwitcher scope={chrome.scope} label={chrome.label} sidebar={chrome.sidebar} onNavigate={chrome.onNavigate} />
+        {title === undefined ? (
+          <ScopeSwitcher scope={chrome.scope} label={chrome.label} sidebar={chrome.sidebar} onNavigate={chrome.onNavigate} />
+        ) : (
+          <span className="px-1 text-[13.5px] font-medium">{title}</span>
+        )}
       </div>
 
       <span className="truncate text-center text-[13.5px] text-muted-foreground max-md:hidden">{crumb}</span>

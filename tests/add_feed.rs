@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::response::Html;
 use axum::routing::get;
 use chrono::{DateTime, TimeZone, Utc};
-use feedrsauros::add_feed::{AddFeedError, add_feed};
+use feedrsauros::add_feed::{AddFeedError, Placement, add_feed};
 use feedrsauros::db::{Db, ItemQuery, ItemScope};
 use feedrsauros::fetch::{FetchError, Fetcher};
 use feedrsauros::schedule::POLL_INTERVAL;
@@ -63,7 +63,14 @@ impl Env {
     }
 
     async fn add(&self, path: &str) -> Result<feedrsauros::add_feed::Added, AddFeedError> {
-        add_feed(&self.db, &self.fetcher, &self.url(path), None, now()).await
+        add_feed(
+            &self.db,
+            &self.fetcher,
+            &self.url(path),
+            Placement::Unfiled,
+            now(),
+        )
+        .await
     }
 }
 
@@ -150,7 +157,7 @@ async fn can_subscribe_into_a_folder() {
         &env.db,
         &env.fetcher,
         &env.url("feed.xml"),
-        Some(folder.id),
+        Placement::Folder(folder.id),
         now(),
     )
     .await

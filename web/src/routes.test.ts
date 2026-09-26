@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { articlePath, parseLocation, scopePath, type Scope } from './routes'
+import { SETTINGS_PATH, articlePath, parseLocation, scopePath, type Scope } from './routes'
 
 const scopes: Scope[] = [
   { kind: 'all' },
@@ -30,7 +30,12 @@ describe('routes', () => {
   })
 
   it('decodes percent-encoded slugs', () => {
-    expect(parseLocation('/folders/caf%C3%A9').scope).toEqual({ kind: 'folder', slug: 'café' })
+    expect(parseLocation('/folders/caf%C3%A9')).toEqual({ scope: { kind: 'folder', slug: 'café' }, article: null })
+  })
+
+  it('has a page for settings', () => {
+    expect(parseLocation(SETTINGS_PATH)).toEqual({ page: 'settings' })
+    expect(parseLocation('/settings/nope')).toEqual({ scope: { kind: 'all' }, article: null })
   })
 
   it('falls back to all articles for unknown paths', () => {

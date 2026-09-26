@@ -1,8 +1,11 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::Router;
-use axum::response::Html;
-use axum::routing::get;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::response::{Html, IntoResponse};
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use feedrsauros::api::{self, AppState};
 use feedrsauros::db::Db;
 use feedrsauros::fetch::Fetcher;
@@ -31,9 +34,60 @@ async fn listen(app: Router) -> Url {
 struct Api {
     base: Url,
     sites: Url,
+    jev: Arc<FakeJev>,
     client: reqwest::Client,
     cancel: CancellationToken,
-    _dir: TempDir,
+    dir: TempDir,
+}
+
+/// Stands in for TypeSafe's API: records each request and replies with `reply`.
+#[derive(Default)]
+struct FakeJev {
+    requests: Mutex<Vec<(HeaderMap, Value)>>,
+    reply: Mutex<Option<(StatusCode, Value)>>,
+}
+
+impl FakeJev {
+    /// Answers the folder question with `choice`, as sure of it as `confidence`.
+    fn picks(&self, choice: &str, confidence: f64) {
+        let answer = json!({
+            "model": "jev-1.13.0",
+            "answers": {
+                "folder": {
+                    "type": "choice",
+                    "choice": choice,
+                    "probabilities": { choice: confidence },
+                    "confidence": confidence
+                }
+            },
+            "usage": { "input_tokens": 300, "output_tokens": 20 }
+        });
+        *self.reply.lock().unwrap() = Some((StatusCode::OK, answer));
+    }
+
+    fn fails(&self) {
+        *self.reply.lock().unwrap() = Some((
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({ "error": "overloaded" }),
+        ));
+    }
+
+    fn requests(&self) -> Vec<(HeaderMap, Value)> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+async fn fake_jev(
+    State(jev): State<Arc<FakeJev>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    jev.requests.lock().unwrap().push((headers, body));
+    let (status, reply) = jev.reply.lock().unwrap().clone().expect("no reply set");
+    (
+        axum::http::StatusCode::from_u16(status.as_u16()).unwrap(),
+        Json(reply),
+    )
 }
 
 impl Drop for Api {
@@ -50,6 +104,13 @@ async fn start() -> Api {
             .route("/no-feed", get(|| async { Html("<html></html>") })),
     )
     .await;
+    let jev = Arc::new(FakeJev::default());
+    let jev_base = listen(
+        Router::new()
+            .route("/v1/systemone", post(fake_jev))
+            .with_state(jev.clone()),
+    )
+    .await;
     let dir = tempfile::tempdir().unwrap();
     let db = Db::open(&dir.path().join("feedrsauros.db")).await.unwrap();
     let fetcher = Fetcher::new(Duration::from_secs(5));
@@ -59,14 +120,16 @@ async fn start() -> Api {
         db,
         fetcher,
         poller,
+        typesafe: jev_base.join("v1/systemone").unwrap(),
     }))
     .await;
     Api {
         base,
         sites,
+        jev,
         client: reqwest::Client::new(),
         cancel,
-        _dir: dir,
+        dir,
     }
 }
 
@@ -125,6 +188,30 @@ impl Api {
         let (status, body) = self.post("api/folders", json!({ "name": name })).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
         body["slug"].as_str().unwrap().to_string()
+    }
+
+    async fn turn_on_ai(&self) {
+        let (status, body) = self
+            .put(
+                "api/settings/api-key",
+                json!({ "key": "ts_live_secret_1234abcd" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        let (status, body) = self
+            .put("api/settings/ai", json!({ "enabled": true }))
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    }
+
+    /// Adds a site without choosing a folder, returning the response body.
+    async fn add_unfiled(&self, site_path: &str) -> Value {
+        let url = self.sites.join(site_path).unwrap();
+        let (status, body) = self
+            .post("api/feeds", json!({ "url": url, "folder": null }))
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        body
     }
 
     async fn sidebar(&self) -> Value {
@@ -657,5 +744,216 @@ mod web_app {
 
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(body["error"].is_string());
+    }
+}
+
+mod settings {
+    use super::*;
+
+    #[tokio::test]
+    async fn start_with_ai_off_and_no_key() {
+        let api = start().await;
+
+        let (status, settings) = api.get("api/settings").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(settings, json!({ "ai_enabled": false, "api_key": null }));
+    }
+
+    #[tokio::test]
+    async fn keep_the_api_key_encrypted_and_only_show_a_hint() {
+        let api = start().await;
+
+        let (status, _) = api
+            .put(
+                "api/settings/api-key",
+                json!({ "key": "ts_live_secret_1234abcd" }),
+            )
+            .await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let settings = api.get("api/settings").await.1;
+        assert_eq!(settings["api_key"], json!({ "hint": "abcd" }));
+        for entry in std::fs::read_dir(api.dir.path()).unwrap() {
+            let bytes = std::fs::read(entry.unwrap().path()).unwrap();
+            assert!(
+                !bytes.windows(10).any(|w| w == b"secret_123"),
+                "the key is stored in plain text"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn refuse_an_empty_key() {
+        let api = start().await;
+
+        let (status, _) = api
+            .put("api/settings/api-key", json!({ "key": "  " }))
+            .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn need_a_key_before_ai_can_be_turned_on() {
+        let api = start().await;
+
+        let (status, _) = api.put("api/settings/ai", json!({ "enabled": true })).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(api.get("api/settings").await.1["ai_enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn turn_ai_off_when_the_key_is_removed() {
+        let api = start().await;
+        api.turn_on_ai().await;
+        assert_eq!(api.get("api/settings").await.1["ai_enabled"], true);
+
+        let (status, _) = api.delete("api/settings/api-key").await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            api.get("api/settings").await.1,
+            json!({ "ai_enabled": false, "api_key": null })
+        );
+    }
+}
+
+mod ai_folders {
+    use super::*;
+
+    fn folder_of(sidebar: &Value, feed: &str) -> Option<String> {
+        sidebar["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|folder| {
+                folder["feeds"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["slug"] == feed)
+                    .then(|| folder["slug"].as_str().unwrap().to_string())
+            })
+    }
+
+    #[tokio::test]
+    async fn put_a_new_site_in_the_folder_jev_picks() {
+        let api = start().await;
+        let rust = api.folder("Rust").await;
+        let engineering = api.folder("Engineering").await;
+        api.subscribe("b.xml", Some(&engineering)).await;
+        api.turn_on_ai().await;
+        api.jev.picks(&engineering, 0.9);
+
+        let added = api.add_unfiled("a.xml").await;
+
+        assert_eq!(added["ai_folder"], engineering);
+        let feed = added["slug"].as_str().unwrap();
+        assert_eq!(
+            folder_of(&api.sidebar().await, feed),
+            Some(engineering.clone())
+        );
+
+        let requests = api.jev.requests();
+        assert_eq!(requests.len(), 1);
+        let (headers, request) = &requests[0];
+        assert_eq!(headers["authorization"], "Bearer ts_live_secret_1234abcd");
+        assert_eq!(request["model"], "jev-latest");
+        assert_eq!(request["state"]["site"]["title"], "Example Blog");
+        let options = request["questions"]["folder"]["criteria"]
+            .as_object()
+            .unwrap();
+        assert!(options.contains_key(&rust));
+        assert!(options.contains_key(&engineering));
+        assert_eq!(options.len(), 3, "each folder plus a way to say none fits");
+        assert_eq!(
+            options[&engineering]["sites_already_in_it"],
+            json!(["Example Blog"])
+        );
+    }
+
+    #[tokio::test]
+    async fn leave_the_site_unfiled_when_no_folder_fits() {
+        let api = start().await;
+        api.folder("Rust").await;
+        api.turn_on_ai().await;
+        api.jev.picks("~none", 0.95);
+
+        let added = api.add_unfiled("a.xml").await;
+
+        assert_eq!(added["ai_folder"], Value::Null);
+        assert_eq!(
+            api.sidebar().await["uncategorized"][0]["slug"],
+            added["slug"]
+        );
+    }
+
+    #[tokio::test]
+    async fn leave_the_site_unfiled_when_jev_is_unsure() {
+        let api = start().await;
+        let rust = api.folder("Rust").await;
+        api.folder("Engineering").await;
+        api.turn_on_ai().await;
+        api.jev.picks(&rust, 0.3);
+
+        let added = api.add_unfiled("a.xml").await;
+
+        assert_eq!(added["ai_folder"], Value::Null);
+        assert_eq!(
+            api.sidebar().await["uncategorized"][0]["slug"],
+            added["slug"]
+        );
+    }
+
+    #[tokio::test]
+    async fn still_add_the_site_when_jev_fails() {
+        let api = start().await;
+        api.folder("Rust").await;
+        api.turn_on_ai().await;
+        api.jev.fails();
+
+        let added = api.add_unfiled("a.xml").await;
+
+        assert_eq!(added["ai_folder"], Value::Null);
+        assert_eq!(api.jev.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn do_not_ask_jev_without_folders() {
+        let api = start().await;
+        api.turn_on_ai().await;
+
+        api.add_unfiled("a.xml").await;
+
+        assert!(api.jev.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn do_not_ask_jev_when_ai_is_off() {
+        let api = start().await;
+        api.folder("Rust").await;
+        api.put(
+            "api/settings/api-key",
+            json!({ "key": "ts_live_secret_1234abcd" }),
+        )
+        .await;
+
+        api.add_unfiled("a.xml").await;
+
+        assert!(api.jev.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn do_not_ask_jev_when_a_folder_was_chosen() {
+        let api = start().await;
+        let rust = api.folder("Rust").await;
+        api.folder("Engineering").await;
+        api.turn_on_ai().await;
+
+        api.subscribe("a.xml", Some(&rust)).await;
+
+        assert!(api.jev.requests().is_empty());
     }
 }

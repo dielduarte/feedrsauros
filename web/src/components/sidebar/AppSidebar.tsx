@@ -1,4 +1,4 @@
-import { AlertCircle, ChevronRight, CircleDot, FolderInput, Inbox, Keyboard, Plus, Star } from 'lucide-react'
+import { AlertCircle, ChevronRight, CircleDot, FolderInput, Inbox, Keyboard, Plus, Settings, Star } from 'lucide-react'
 import { memo, type ReactNode, useState } from 'react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import {
@@ -28,9 +28,11 @@ import { RowMenu, UnreadCount } from './RowMenu'
 import { useTreeDrag } from './useTreeDrag'
 
 type Props = {
-  scope: Scope
+  /** `null` while settings are open, since no list is. */
+  scope: Scope | null
   sidebar: SidebarData | undefined
   onNavigate: (scope: Scope) => void
+  onOpenSettings: () => void
   onOpenDialog: (dialog: DialogName) => void
   /** A feed or folder was renamed, so its URL changed. */
   onRenamed: (from: Scope, to: Scope) => void
@@ -39,10 +41,10 @@ type Props = {
 const dropLine =
   "before:absolute before:inset-x-2 before:-top-px before:h-0.5 before:rounded-full before:bg-signal before:content-['']"
 
-const isActive = (current: Scope, candidate: Scope) => scopePath(current) === scopePath(candidate)
+const isActive = (current: Scope | null, candidate: Scope) => current !== null && scopePath(current) === scopePath(candidate)
 
 /** Memoized: it only depends on the sidebar data and where you are, not on the article list. */
-export const AppSidebar = memo(function AppSidebar({ scope, sidebar, onNavigate, onOpenDialog, onRenamed }: Props) {
+export const AppSidebar = memo(function AppSidebar({ scope, sidebar, onNavigate, onOpenSettings, onOpenDialog, onRenamed }: Props) {
   const actions = useSubscriptionActions()
   const refresh = useRefresh()
   const [collapsed, setCollapsed] = useStoredState<string[]>('collapsedFolders', [])
@@ -214,6 +216,7 @@ export const AppSidebar = memo(function AppSidebar({ scope, sidebar, onNavigate,
           <SidebarMenu>
             <NavItem icon={<FolderInput />} label="Import & export" onClick={() => onOpenDialog('transfer')} />
             <NavItem icon={<Keyboard />} label="Keyboard shortcuts" onClick={() => onOpenDialog('shortcuts')} />
+            <NavItem icon={<Settings />} label="Settings" active={scope === null} onClick={onOpenSettings} />
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>

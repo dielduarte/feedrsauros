@@ -10,11 +10,12 @@ import { AppSidebar } from './components/sidebar/AppSidebar'
 import { scopeLabel } from './lookup'
 import { ListPage } from './pages/ListPage'
 import { ReaderPage } from './pages/ReaderPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { usePollerStatus, useRefresh, useServerEvents } from './poller'
 import { sentence } from './format'
 import { hostOf, pendingSlug } from './pending'
 import { useAddFeed, useLookup, useSidebarData } from './queries'
-import { type ArticleRef, articleKey, articlePath, parseLocation, scopePath, type Scope } from './routes'
+import { type ArticleRef, SETTINGS_PATH, articleKey, articlePath, isReading, parseLocation, scopePath, type Scope } from './routes'
 
 export function App() {
   const [open, setOpen] = useStoredState('sidebarOpen', true)
@@ -25,17 +26,23 @@ export function App() {
   )
 }
 
+/** What the top bar's refresh and shortcuts act on while settings are open. */
+const ALL: Scope = { kind: 'all' }
+
 function Shell() {
   const [path, setPath] = useLocation()
   // Parsed once per URL so `scope` keeps its identity and memoized children don't re-render.
   const location = useMemo(() => parseLocation(path), [path])
-  const { article } = location
+  const reading = isReading(location) ? location : null
+  const article = reading?.article ?? null
   // An article has one URL wherever it was opened from; the list it came from rides along in
   // history state, so the switcher, J/K and Back keep working within that list.
   const scope = useMemo(() => {
+    if (!isReading(location)) return ALL
     const listPath: unknown = window.history.state?.listPath
-    return article && typeof listPath === 'string' ? parseLocation(listPath).scope : location.scope
-  }, [location, article])
+    const list = location.article && typeof listPath === 'string' ? parseLocation(listPath) : location
+    return isReading(list) ? list.scope : location.scope
+  }, [location])
   const { toggleSidebar, isMobile, setOpenMobile } = useSidebar()
   const [unreadPreference, setUnreadPreference] = useStoredState('unreadOnly', false)
   const [dialog, setDialog] = useState<DialogName | null>(null)
@@ -79,6 +86,10 @@ function Shell() {
     [article, scope, setPath],
   )
   const backToList = useCallback(() => setPath(scopePath(scope)), [setPath, scope])
+  const openSettings = useCallback(() => {
+    setPath(SETTINGS_PATH)
+    if (isMobile) setOpenMobile(false)
+  }, [setPath, isMobile, setOpenMobile])
   const closeDialog = useCallback(() => {
     setDialog(null)
     setAddDraft(null)
@@ -95,6 +106,9 @@ function Shell() {
     addFeed({ url, folder, pending }).then(
       (added) => {
         if (stillWaiting()) setPath(scopePath({ kind: 'feed', slug: added.slug }), { replace: true })
+        if (added.ai_folder) {
+          toast(`Jev filed ${added.title} under ${lookup.folder(added.ai_folder)?.name ?? added.ai_folder}`)
+        }
       },
       (error: Error) => {
         if (stillWaiting()) setPath(scopePath(cameFrom), { replace: true })
@@ -129,10 +143,19 @@ function Shell() {
 
   return (
     <>
-      <AppSidebar scope={scope} sidebar={sidebar} onNavigate={navigate} onOpenDialog={setDialog} onRenamed={followRename} />
+      <AppSidebar
+        scope={reading === null ? null : scope}
+        sidebar={sidebar}
+        onNavigate={navigate}
+        onOpenSettings={openSettings}
+        onOpenDialog={setDialog}
+        onRenamed={followRename}
+      />
 
       <SidebarInset className="h-dvh min-w-0 overflow-hidden md:h-[calc(100dvh-1rem)] md:border md:shadow-[0_1px_2px_rgb(0_0_0/0.03),0_18px_40px_-20px_rgb(0_0_0/0.12)]">
-        {article === null ? (
+        {reading === null ? (
+          <SettingsPage chrome={chrome} />
+        ) : article === null ? (
           <ListPage
             // A new scope starts with a fresh selection.
             key={scopePath(scope)}
