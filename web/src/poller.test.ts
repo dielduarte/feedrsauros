@@ -35,7 +35,7 @@ describe('server poller status', () => {
   })
 })
 
-describe('articles filtered by new rules', () => {
+describe('articles filtered by changed filters', () => {
   it('reload the sidebar and every list', () => {
     client.setQueryData(keys.sidebar, { total_unread: 4, total_starred: 0, folders: [], uncategorized: [] })
     client.setQueryData(keys.items({ kind: 'all' }, false), { pages: [], pageParams: [] })

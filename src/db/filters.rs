@@ -1,53 +1,34 @@
 use std::collections::HashSet;
 
 use super::{Db, DbError};
+use crate::filter::Filters;
 use crate::model::FeedId;
-use crate::rules::{Rule, RuleAction};
 
 impl Db {
-    pub async fn rules(&self, feed: FeedId) -> Result<Vec<Rule>, DbError> {
-        let rows = sqlx::query!(
-            "SELECT condition, action FROM feed_rules WHERE feed_id = ? ORDER BY position",
+    pub async fn filters(&self, feed: FeedId) -> Result<Filters, DbError> {
+        let row = sqlx::query!(
+            "SELECT filter_wanted, filter_unwanted FROM feeds WHERE id = ?",
             feed
         )
-        .fetch_all(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| Rule {
-                condition: row.condition,
-                action: match row.action.as_str() {
-                    "keep_only" => RuleAction::KeepOnly,
-                    _ => RuleAction::Hide,
-                },
-            })
-            .collect())
+        Ok(Filters {
+            wanted: row.filter_wanted,
+            unwanted: row.filter_unwanted,
+        })
     }
 
-    /// Replaces the feed's rules with `rules`, in that order.
-    pub async fn set_rules(&self, feed: FeedId, rules: &[Rule]) -> Result<(), DbError> {
-        let mut tx = self.pool.begin().await?;
-        sqlx::query!("DELETE FROM feed_rules WHERE feed_id = ?", feed)
-            .execute(&mut *tx)
-            .await?;
-        for (position, rule) in rules.iter().enumerate() {
-            let position = position as i64;
-            let action = match rule.action {
-                RuleAction::Hide => "hide",
-                RuleAction::KeepOnly => "keep_only",
-            };
+    pub async fn set_filters(&self, feed: FeedId, filters: &Filters) -> Result<(), DbError> {
+        super::found(
             sqlx::query!(
-                "INSERT INTO feed_rules (feed_id, position, condition, action) VALUES (?, ?, ?, ?)",
-                feed,
-                position,
-                rule.condition,
-                action
+                "UPDATE feeds SET filter_wanted = ?, filter_unwanted = ? WHERE id = ?",
+                filters.wanted,
+                filters.unwanted,
+                feed
             )
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(())
+            .execute(&self.pool)
+            .await?,
+        )
     }
 
     /// Guids of the feed's stored articles, hidden ones included: each is judged once on arrival.
@@ -70,8 +51,8 @@ pub struct SavedArticle {
 }
 
 impl Db {
-    /// The feed's own title and every stored article the rules may judge: hidden ones too, but
-    /// not starred ones, which stay whatever the rules say.
+    /// The feed's own title and every stored article the filters may judge: hidden ones too, but
+    /// not starred ones, which stay whatever the filters say.
     pub async fn judgeable_articles(
         &self,
         feed: FeedId,
@@ -123,7 +104,7 @@ impl Db {
         Ok((hidden, shown))
     }
 
-    /// Brings back every hidden article, e.g. once a feed has no rules left.
+    /// Brings back every hidden article, e.g. once a feed has no filters left.
     pub async fn show_all(&self, feed: FeedId) -> Result<u64, DbError> {
         Ok(sqlx::query!(
             "UPDATE items SET hidden_at = NULL WHERE feed_id = ? AND hidden_at IS NOT NULL",

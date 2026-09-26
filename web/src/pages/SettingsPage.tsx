@@ -40,16 +40,16 @@ export function SettingsPage({ chrome }: { chrome: Chrome }) {
           <section className="mt-10 border-t pt-8" aria-labelledby="ai-heading">
             <h2 id="ai-heading" className="text-[17px] font-semibold">AI</h2>
             <p className="mt-1 max-w-[60ch] text-[14px] text-muted-foreground">
-              feedrsauros can use Jev, a model by{' '}
-              <a href="https://typesafe.ai" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
-                TypeSafe
-              </a>
-              , to file the sites you add into your folders. Your API key is encrypted and stays on this machine.
+              feedrsauros can file the sites you add into your folders, and filter each feed down to what you want to
+              read. Your API key is encrypted and stays on this machine.
             </p>
 
             <div className="mt-6">
               <label htmlFor={keyId} className="text-[14px] font-medium">
-                TypeSafe API key
+                <a href="https://typesafe.ai" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                  typesafe.ai
+                </a>{' '}
+                API key
               </label>
               {editing ? (
                 <form onSubmit={save} className="mt-2 flex max-w-md gap-2">
@@ -89,12 +89,12 @@ export function SettingsPage({ chrome }: { chrome: Chrome }) {
             <div className="mt-8 flex max-w-lg items-start justify-between gap-6">
               <div>
                 <label htmlFor={aiId} className="text-[14px] font-medium">
-                  File new sites into folders
+                  AI features
                 </label>
                 <p className="mt-1 text-[14px] text-muted-foreground">
                   {savedKey === null
-                    ? 'Save an API key to turn this on.'
-                    : "When you add a site without choosing a folder, Jev puts it in the one that fits best. If you have no folders, nothing is sent."}
+                    ? 'Save an API key to turn these on.'
+                    : 'Sites you add without a folder go into the one that fits best, and each feed can have filters, from its menu in the sidebar.'}
                 </p>
               </div>
               <Switch

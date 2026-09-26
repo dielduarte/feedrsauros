@@ -60,7 +60,7 @@ pub async fn set_ai(
     match state.db.set_ai_enabled(body.enabled).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(DbError::NotFound) => Err(ApiError::BadRequest(
-            "add a TypeSafe API key before turning on AI features".into(),
+            "add a typesafe.ai API key before turning on AI features".into(),
         )),
         Err(error) => Err(error.into()),
     }

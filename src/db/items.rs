@@ -243,7 +243,7 @@ impl Db {
         seen_until: DateTime<Utc>,
     ) -> Result<u64, DbError> {
         let mut sql = QueryBuilder::new(
-            // Hidden articles stay unread, so they come back unread if the rules let them through.
+            // Hidden articles stay unread, so they come back unread if the filters let them through.
             "UPDATE items SET read_at = unixepoch() WHERE items.read_at IS NULL AND items.hidden_at IS NULL AND items.fetched_at <= ",
         );
         sql.push_bind(ts(seen_until));

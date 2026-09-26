@@ -46,7 +46,7 @@ pub enum PollerEvent {
     BatchFinished {
         health: BatchHealth,
     },
-    /// Changed rules hid or brought back articles the feed had already stored.
+    /// Changed filters hid or brought back articles the feed had already stored.
     FeedFiltered {
         feed: String,
         hidden: u64,
@@ -111,7 +111,7 @@ impl PollerHandle {
     }
 }
 
-/// `typesafe` is where Jev is asked to apply feed rules, while AI features are on.
+/// `typesafe` is where Jev is asked to apply feed filters, while AI features are on.
 pub fn spawn(
     db: Db,
     fetcher: Fetcher,
@@ -268,7 +268,7 @@ async fn time_until_next_due(db: &Db) -> Duration {
 
 /// Fetches concurrently, but stores results from this task only: SQLite has a single writer,
 /// so funnelling writes here avoids lock contention between fetches.
-/// `jev` applies each feed's rules to its new articles; without it rules are skipped.
+/// `jev` applies each feed's filters to its new articles; without it filters are skipped.
 pub async fn run_batch(
     db: &Db,
     fetcher: &Fetcher,

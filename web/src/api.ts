@@ -63,11 +63,10 @@ export interface Settings {
   api_key: { hint: string } | null
 }
 
-/** A filter Jev applies to a feed's new articles. */
-export interface Rule {
-  /** The kind of article, in the reader's words, e.g. "soccer news". */
-  condition: string
-  action: 'hide' | 'keep_only'
+/** What the reader wants and doesn't want from a feed, in their own words; Jev applies them. */
+export interface Filters {
+  wanted: string | null
+  unwanted: string | null
 }
 
 export interface ImportReport {
@@ -81,7 +80,7 @@ export type PollerEvent =
   | { type: 'feed_refreshed'; feed: string; new_items: number }
   | { type: 'feed_failed'; feed: string; error: string }
   | { type: 'batch_finished'; health: 'online' | 'offline' }
-  /** Changed rules hid or brought back articles a feed had already stored. */
+  /** Changed filters hid or brought back articles a feed had already stored. */
   | { type: 'feed_filtered'; feed: string; hidden: number; shown: number }
   | { type: 'resync' }
 
@@ -141,8 +140,9 @@ export const api = {
   saveApiKey: (key: string) => request<void>('PUT', '/api/settings/api-key', { key }),
   removeApiKey: () => request<void>('DELETE', '/api/settings/api-key'),
   setAi: (enabled: boolean) => request<void>('PUT', '/api/settings/ai', { enabled }),
-  rules: (feed: string) => request<Rule[]>('GET', `/api/feeds/${encodeURIComponent(feed)}/rules`),
-  saveRules: (feed: string, rules: Rule[]) => request<void>('PUT', `/api/feeds/${encodeURIComponent(feed)}/rules`, rules),
+  filters: (feed: string) => request<Filters>('GET', `/api/feeds/${encodeURIComponent(feed)}/filters`),
+  saveFilters: (feed: string, filters: Filters) =>
+    request<void>('PUT', `/api/feeds/${encodeURIComponent(feed)}/filters`, filters),
 
   items(scope: Scope, unreadOnly: boolean, cursor: string | null) {
     const query = new URLSearchParams()

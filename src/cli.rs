@@ -146,7 +146,7 @@ async fn add(db: Db, input: &str, folder: Option<String>) -> anyhow::Result<()> 
     let fetcher = Fetcher::new(DEFAULT_TIMEOUT);
     let added = add_feed(&db, &fetcher, &url, placement, Utc::now()).await?;
     let filed = match &added.ai_folder {
-        Some(folder) => format!(", filed under {folder} by Jev"),
+        Some(folder) => format!(", filed under {folder}"),
         None => String::new(),
     };
     println!(

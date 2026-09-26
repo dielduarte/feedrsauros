@@ -13,12 +13,12 @@ type Props = {
   onRename: () => void
   onRefresh: () => void
   /** Offered only while AI features are on. */
-  onRules?: () => void
+  onFilters?: () => void
   destructiveLabel: string
   onDestroy: () => void
 }
 
-export function RowMenu({ label, onRename, onRefresh, onRules, destructiveLabel, onDestroy }: Props) {
+export function RowMenu({ label, onRename, onRefresh, onFilters, destructiveLabel, onDestroy }: Props) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -29,7 +29,7 @@ export function RowMenu({ label, onRename, onRefresh, onRules, destructiveLabel,
       <DropdownMenuContent side="right" align="start" className="dark">
         <DropdownMenuItem onSelect={onRename}>Rename</DropdownMenuItem>
         <DropdownMenuItem onSelect={onRefresh}>Refresh now</DropdownMenuItem>
-        {onRules ? <DropdownMenuItem onSelect={onRules}>AI rules…</DropdownMenuItem> : null}
+        {onFilters ? <DropdownMenuItem onSelect={onFilters}>Filters</DropdownMenuItem> : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onSelect={onDestroy}>
           {destructiveLabel}

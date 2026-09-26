@@ -1,10 +1,10 @@
 mod error;
 mod events;
 mod feeds;
+mod filters;
 mod folders;
 mod items;
 mod opml;
-mod rules;
 mod settings;
 mod web;
 
@@ -45,8 +45,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/feeds/{slug}/position", put(feeds::move_to))
         .route("/api/feeds/{slug}/title", put(feeds::rename))
         .route(
-            "/api/feeds/{slug}/rules",
-            get(rules::list).put(rules::replace),
+            "/api/feeds/{slug}/filters",
+            get(filters::show).put(filters::save),
         )
         .route(
             "/api/feeds/{feed}/items/{item}",

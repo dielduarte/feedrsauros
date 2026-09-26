@@ -11,13 +11,13 @@ export type ArticleRef = { feed: string; slug: string }
 /** A list of articles, optionally with one of them open. */
 export type Reading = { scope: Scope; article: ArticleRef | null }
 
-export type Location = Reading | { page: 'settings' } | { page: 'rules'; feed: string }
+export type Location = Reading | { page: 'settings' } | { page: 'filters'; feed: string }
 
 export const SETTINGS_PATH = '/settings'
 
 /** Outside `/feeds/…`, where the segment after the feed is an article. */
-export function rulesPath(feed: string): string {
-  return `/rules/${encodeURIComponent(feed)}`
+export function filtersPath(feed: string): string {
+  return `/filters/${encodeURIComponent(feed)}`
 }
 
 export function isReading(location: Location): location is Reading {
@@ -54,7 +54,7 @@ export function parseLocation(path: string): Location {
   const [section, slug, article, ...rest] = segments
   if (rest.length > 0) return ALL
   if (section === 'settings' && slug === undefined) return { page: 'settings' }
-  if (section === 'rules' && slug !== undefined && article === undefined) return { page: 'rules', feed: slug }
+  if (section === 'filters' && slug !== undefined && article === undefined) return { page: 'filters', feed: slug }
 
   if ((section === 'unread' || section === 'starred') && slug === undefined) {
     return { scope: { kind: section }, article: null }

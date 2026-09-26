@@ -9,7 +9,7 @@ import {
 } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
-import { api, type Item, type ItemSummary, type Page, type Rule, type Sidebar } from './api'
+import { api, type Item, type ItemSummary, type Filters, type Page, type Sidebar } from './api'
 import { sentence } from './format'
 import { buildLookup } from './lookup'
 import { withPendingFeed } from './pending'
@@ -18,7 +18,7 @@ import { type ArticleRef, articleKey, scopePath, type Scope } from './routes'
 export const keys = {
   sidebar: ['sidebar'] as const,
   settings: ['settings'] as const,
-  rules: (feed: string) => ['rules', feed] as const,
+  filters: (feed: string) => ['filters', feed] as const,
   poller: ['poller'] as const,
   allItems: ['items'] as const,
   items: (scope: Scope, unreadOnly: boolean) => ['items', scopePath(scope), unreadOnly] as const,
@@ -62,15 +62,15 @@ export function useSettingsActions() {
   }
 }
 
-export function useRules(feed: string) {
-  return useQuery({ queryKey: keys.rules(feed), queryFn: () => api.rules(feed) })
+export function useFilters(feed: string) {
+  return useQuery({ queryKey: keys.filters(feed), queryFn: () => api.filters(feed) })
 }
 
-export function useSaveRules(feed: string) {
+export function useSaveFilters(feed: string) {
   const client = useQueryClient()
   return useMutation({
-    mutationFn: (rules: Rule[]) => api.saveRules(feed, rules),
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.rules(feed) }),
+    mutationFn: (filters: Filters) => api.saveFilters(feed, filters),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.filters(feed) }),
     onError: (error) => toast.error(sentence(error.message)),
   })
 }

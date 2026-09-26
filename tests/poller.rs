@@ -10,10 +10,10 @@ use axum::{Json, Router};
 use chrono::{DateTime, TimeZone, Utc};
 use feedrsauros::db::{Db, Feed, FetchRecord, ItemQuery, ItemScope, NewFeed};
 use feedrsauros::fetch::Fetcher;
+use feedrsauros::filter::Filters;
 use feedrsauros::jev::Jev;
 use feedrsauros::model::{FeedId, FeedScope};
 use feedrsauros::poller::{self, BatchHealth, PER_HOST, PollerEvent, run_batch};
-use feedrsauros::rules::{Rule, RuleAction};
 use feedrsauros::schedule::POLL_INTERVAL;
 use serde_json::{Map, Value, json};
 use tempfile::TempDir;
@@ -166,11 +166,8 @@ impl Env {
     }
 
     async fn hide_first_posts(&self, feed: FeedId) {
-        let rule = Rule {
-            condition: "first posts".into(),
-            action: RuleAction::Hide,
-        };
-        self.db.set_rules(feed, &[rule]).await.unwrap();
+        let filters = Filters::new(None, Some("first posts"));
+        self.db.set_filters(feed, &filters).await.unwrap();
     }
 
     async fn titles(&self, feed: FeedId) -> Vec<String> {
@@ -535,7 +532,7 @@ mod background {
     }
 }
 
-mod rules {
+mod filters {
     use super::*;
 
     const ALL_POSTS: [&str; 4] = [
@@ -546,7 +543,7 @@ mod rules {
     ];
 
     #[tokio::test]
-    async fn hide_new_articles_a_rule_matches() {
+    async fn hide_new_articles_the_reader_does_not_want() {
         let env = env().await;
         let feed = env.add_path("feeds/a").await;
         env.turn_on_ai().await;
@@ -559,6 +556,19 @@ mod rules {
             ["Another linkless note", "Linkless note", "Second post"]
         );
         assert_eq!(env.jev_requests(), 4, "one request per new article");
+    }
+
+    #[tokio::test]
+    async fn keep_only_what_the_reader_wants_to_see() {
+        let env = env().await;
+        let feed = env.add_path("feeds/a").await;
+        env.turn_on_ai().await;
+        let filters = Filters::new(Some("first posts"), None);
+        env.db.set_filters(feed.id, &filters).await.unwrap();
+
+        env.batch(vec![feed.clone()]).await;
+
+        assert_eq!(env.titles(feed.id).await, ["First post"]);
     }
 
     #[tokio::test]
@@ -606,7 +616,7 @@ mod rules {
     }
 
     #[tokio::test]
-    async fn do_not_ask_jev_about_feeds_without_rules() {
+    async fn do_not_ask_jev_about_feeds_without_filters() {
         let env = env().await;
         let feed = env.add_path("feeds/a").await;
         env.turn_on_ai().await;

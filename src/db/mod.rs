@@ -1,8 +1,8 @@
 mod feeds;
+mod filters;
 mod folders;
 mod items;
 mod polling;
-mod rules;
 mod settings;
 mod sidebar;
 
@@ -15,9 +15,9 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteQueryResult};
 
 pub use feeds::{Feed, FetchRecord, NewFeed};
+pub use filters::SavedArticle;
 pub use folders::Folder;
 pub use items::{Cursor, Item, ItemQuery, ItemScope, ItemSummary, Page};
-pub use rules::SavedArticle;
 pub use settings::Settings;
 pub use sidebar::{Sidebar, SidebarFeed, SidebarFolder};
 

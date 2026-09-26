@@ -23,7 +23,7 @@ type Props = {
 export function AddFeedDialog({ sidebar, initialUrl, defaultFolder, onClose, onSubmit }: Props) {
   const [url, setUrl] = useState(initialUrl)
   const [folder, setFolder] = useState(defaultFolder ?? NO_FOLDER)
-  // With AI on, leaving the folder unset asks Jev to pick one.
+  // With AI on, leaving the folder unset lets the server pick one.
   const aiEnabled = useSettings().data?.ai_enabled ?? false
   const address = url.trim()
 
@@ -58,7 +58,7 @@ export function AddFeedDialog({ sidebar, initialUrl, defaultFolder, onClose, onS
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="dark">
-                <SelectItem value={NO_FOLDER}>{aiEnabled ? 'Let Jev choose' : 'No folder'}</SelectItem>
+                <SelectItem value={NO_FOLDER}>{aiEnabled ? 'Choose for me' : 'No folder'}</SelectItem>
                 {sidebar.folders.map((f) => (
                   <SelectItem key={f.slug} value={f.slug}>
                     {f.name}

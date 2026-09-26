@@ -10,13 +10,13 @@ import { AppSidebar } from './components/sidebar/AppSidebar'
 import { scopeLabel } from './lookup'
 import { ListPage } from './pages/ListPage'
 import { ReaderPage } from './pages/ReaderPage'
-import { RulesPage } from './pages/RulesPage'
+import { FiltersPage } from './pages/FiltersPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { usePollerStatus, useRefresh, useServerEvents } from './poller'
 import { sentence } from './format'
 import { hostOf, pendingSlug } from './pending'
 import { useAddFeed, useLookup, useSidebarData } from './queries'
-import { type ArticleRef, SETTINGS_PATH, articleKey, articlePath, isReading, parseLocation, rulesPath, scopePath, type Scope } from './routes'
+import { type ArticleRef, SETTINGS_PATH, articleKey, articlePath, isReading, parseLocation, filtersPath, scopePath, type Scope } from './routes'
 
 export function App() {
   const [open, setOpen] = useStoredState('sidebarOpen', true)
@@ -38,7 +38,7 @@ function Shell() {
   // An article has one URL wherever it was opened from; the list it came from rides along in
   // history state, so the switcher, J/K and Back keep working within that list.
   const scope = useMemo((): Scope => {
-    if (!isReading(location)) return location.page === 'rules' ? { kind: 'feed', slug: location.feed } : ALL
+    if (!isReading(location)) return location.page === 'filters' ? { kind: 'feed', slug: location.feed } : ALL
     const listPath: unknown = window.history.state?.listPath
     const list = location.article && typeof listPath === 'string' ? parseLocation(listPath) : location
     return isReading(list) ? list.scope : location.scope
@@ -90,9 +90,9 @@ function Shell() {
     setPath(SETTINGS_PATH)
     if (isMobile) setOpenMobile(false)
   }, [setPath, isMobile, setOpenMobile])
-  const openRules = useCallback(
+  const openFilters = useCallback(
     (feed: string) => {
-      setPath(rulesPath(feed))
+      setPath(filtersPath(feed))
       if (isMobile) setOpenMobile(false)
     },
     [setPath, isMobile, setOpenMobile],
@@ -114,7 +114,7 @@ function Shell() {
       (added) => {
         if (stillWaiting()) setPath(scopePath({ kind: 'feed', slug: added.slug }), { replace: true })
         if (added.ai_folder) {
-          toast(`Jev filed ${added.title} under ${lookup.folder(added.ai_folder)?.name ?? added.ai_folder}`)
+          toast(`Filed ${added.title} under ${lookup.folder(added.ai_folder)?.name ?? added.ai_folder}`)
         }
       },
       (error: Error) => {
@@ -151,11 +151,11 @@ function Shell() {
   return (
     <>
       <AppSidebar
-        scope={isReading(location) || location.page === 'rules' ? scope : null}
+        scope={isReading(location) || location.page === 'filters' ? scope : null}
         sidebar={sidebar}
         onNavigate={navigate}
         onOpenSettings={openSettings}
-        onOpenRules={openRules}
+        onOpenFilters={openFilters}
         onOpenDialog={setDialog}
         onRenamed={followRename}
       />
@@ -165,7 +165,7 @@ function Shell() {
           location.page === 'settings' ? (
             <SettingsPage chrome={chrome} />
           ) : (
-            <RulesPage chrome={chrome} feed={location.feed} />
+            <FiltersPage chrome={chrome} feed={location.feed} />
           )
         ) : article === null ? (
           <ListPage

@@ -5,8 +5,8 @@ use serde_json::{Map, Value, json};
 use url::Url;
 
 use crate::db::{Db, DbError, Folder, SidebarFolder};
+use crate::filter::{Filters, Verdict};
 use crate::parse::ParsedFeed;
-use crate::rules::Rule;
 
 /// TypeSafe's evaluation endpoint, where Jev runs.
 pub const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
@@ -15,7 +15,7 @@ pub const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 const NO_FOLDER: &str = "~none";
 /// A wrong pick costs a drag in the sidebar, so a fairly clear lead is enough to act on.
 const MIN_CONFIDENCE: f64 = 0.5;
-/// A rule matches when yes is more likely than no.
+/// A filter applies when yes is more likely than no.
 const MATCH: f64 = 0.5;
 const RECENT_ARTICLES: usize = 10;
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -70,22 +70,19 @@ impl Jev {
             .map(|f| f.folder.clone()))
     }
 
-    /// Whether an article matches each rule's condition, in the rules' order.
-    pub async fn matches(
+    /// How an article fares against each of the feed's filters that is set.
+    pub async fn judge(
         &self,
-        rules: &[Rule],
+        filters: &Filters,
         site: &str,
         article: Article<'_>,
-    ) -> Result<Vec<bool>, JevError> {
-        let reply: RuleReply = self.ask(&rules_request(rules, site, article)).await?;
-        Ok((0..rules.len())
-            .map(|i| {
-                reply
-                    .answers
-                    .get(&rule_id(i))
-                    .is_some_and(|answer| answer.noul >= MATCH)
-            })
-            .collect())
+    ) -> Result<Verdict, JevError> {
+        let reply: FilterReply = self.ask(&filters_request(filters, site, article)).await?;
+        let yes = |answer: Option<NoulAnswer>| answer.map(|a| a.noul >= MATCH);
+        Ok(Verdict {
+            wanted: filters.wanted.as_ref().and(yes(reply.answers.wanted)),
+            unwanted: filters.unwanted.as_ref().and(yes(reply.answers.unwanted)),
+        })
     }
 
     async fn ask<T: serde::de::DeserializeOwned>(&self, request: &Value) -> Result<T, JevError> {
@@ -104,36 +101,48 @@ impl Jev {
     }
 }
 
-fn rule_id(index: usize) -> String {
-    format!("rule_{index}")
-}
-
-/// What Jev reads of an article to judge it against rules.
+/// What Jev reads of an article to judge it against a feed's filters.
 #[derive(Clone, Copy)]
 pub struct Article<'a> {
     pub title: Option<&'a str>,
     pub summary: Option<&'a str>,
 }
 
-fn rules_request(rules: &[Rule], site: &str, article: Article<'_>) -> Value {
-    let questions: Map<String, Value> = rules
-        .iter()
-        .enumerate()
-        .map(|(i, rule)| {
-            let question = json!({
+/// One yes/no question per filter the reader wrote; an unset filter isn't asked about.
+fn filters_request(filters: &Filters, site: &str, article: Article<'_>) -> Value {
+    let mut questions = Map::new();
+    if let Some(wanted) = &filters.wanted {
+        questions.insert(
+            "wanted".into(),
+            json!({
                 "type": "noul",
                 "instructions": {
-                    "condition": rule.condition,
-                    "question": "Does `article` match `condition`, the reader's description of a kind of article?",
+                    "wanted": wanted,
+                    "question": "The reader described in `wanted` what they want to see from this site. Is `article` something they want to see?",
                 },
                 "criteria": {
-                    "true": "The article is the kind of article `condition` describes.",
-                    "false": "The article is not that kind of article.",
+                    "true": "The article fits what the reader wants to see.",
+                    "false": "The article is not something the reader asked to see.",
                 },
-            });
-            (rule_id(i), question)
-        })
-        .collect();
+            }),
+        );
+    }
+    if let Some(unwanted) = &filters.unwanted {
+        questions.insert(
+            "unwanted".into(),
+            json!({
+                "type": "noul",
+                "instructions": {
+                    "unwanted": unwanted,
+                    "question": "The reader described in `unwanted` what they don't want to see from this site. Is `article` something they don't want to see?",
+                },
+                "criteria": {
+                    "true": "The article is the kind of thing the reader doesn't want to see.",
+                    "false": "The article is not something the reader ruled out.",
+                },
+            }),
+        );
+    }
     json!({
         "model": "jev-latest",
         "state": {
@@ -199,8 +208,14 @@ struct Answers {
 }
 
 #[derive(Deserialize)]
-struct RuleReply {
-    answers: std::collections::HashMap<String, NoulAnswer>,
+struct FilterReply {
+    answers: FilterAnswers,
+}
+
+#[derive(Deserialize)]
+struct FilterAnswers {
+    wanted: Option<NoulAnswer>,
+    unwanted: Option<NoulAnswer>,
 }
 
 #[derive(Deserialize)]

@@ -18,7 +18,10 @@ CREATE TABLE feeds (
   last_modified  TEXT,
   next_fetch_at  INTEGER NOT NULL,
   error_count    INTEGER NOT NULL DEFAULT 0,
-  last_error     TEXT
+  last_error     TEXT,
+  -- The reader's own words for what they want and don't want from this feed; Jev applies them.
+  filter_wanted   TEXT CHECK (trim(filter_wanted) <> ''),
+  filter_unwanted TEXT CHECK (trim(filter_unwanted) <> '')
 );
 
 CREATE TABLE items (
@@ -35,10 +38,26 @@ CREATE TABLE items (
   fetched_at    INTEGER NOT NULL,
   read_at       INTEGER,
   starred_at    INTEGER,
+  -- Set while the feed's filters keep the article out; it stays stored so they can bring it back.
+  hidden_at     INTEGER,
   UNIQUE (feed_id, guid),
   UNIQUE (feed_id, slug)
 );
 
 CREATE INDEX items_timeline ON items(published_at DESC, id DESC);
-CREATE INDEX items_unread ON items(feed_id) WHERE read_at IS NULL;
+CREATE INDEX items_unread ON items(feed_id) WHERE read_at IS NULL AND hidden_at IS NULL;
 CREATE INDEX feeds_due ON feeds(next_fetch_at);
+
+-- One row of app-wide settings.
+CREATE TABLE settings (
+  id                     INTEGER PRIMARY KEY CHECK (id = 1),
+  ai_enabled             INTEGER NOT NULL DEFAULT 0,
+  -- Nonce followed by ciphertext; the encryption key lives in a separate file.
+  typesafe_api_key       BLOB,
+  -- The key's last characters, so it can be recognised without decrypting it.
+  typesafe_api_key_hint  TEXT,
+  CHECK ((typesafe_api_key IS NULL) = (typesafe_api_key_hint IS NULL)),
+  CHECK (ai_enabled = 0 OR typesafe_api_key IS NOT NULL)
+);
+
+INSERT INTO settings (id) VALUES (1);

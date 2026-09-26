@@ -10,7 +10,6 @@ pub mod model;
 pub mod opml;
 pub mod parse;
 pub mod poller;
-pub mod rules;
 pub mod sanitize;
 pub mod schedule;
 pub mod secrets;

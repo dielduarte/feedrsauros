@@ -988,52 +988,46 @@ mod ai_folders {
     }
 }
 
-mod rules {
+mod filters {
     use super::*;
 
     #[tokio::test]
     async fn start_empty_and_keep_what_is_saved() {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
-        let path = format!("api/feeds/{feed}/rules");
-        assert_eq!(api.get(&path).await.1, json!([]));
-        let rules = json!([
-            { "condition": "soccer news", "action": "hide" },
-            { "condition": "science", "action": "keep_only" }
-        ]);
-
-        let (status, _) = api.put(&path, rules.clone()).await;
-
-        assert_eq!(status, StatusCode::NO_CONTENT);
-        assert_eq!(api.get(&path).await.1, rules);
-    }
-
-    #[tokio::test]
-    async fn replace_the_whole_list() {
-        let api = start().await;
-        let feed = api.subscribe("a.xml", None).await;
-        let path = format!("api/feeds/{feed}/rules");
-        api.put(&path, json!([{ "condition": "soccer", "action": "hide" }]))
-            .await;
-
-        api.put(&path, json!([])).await;
-
-        assert_eq!(api.get(&path).await.1, json!([]));
-    }
-
-    #[tokio::test]
-    async fn refuse_a_rule_without_a_condition() {
-        let api = start().await;
-        let feed = api.subscribe("a.xml", None).await;
+        let path = format!("api/feeds/{feed}/filters");
+        assert_eq!(
+            api.get(&path).await.1,
+            json!({ "wanted": null, "unwanted": null })
+        );
 
         let (status, _) = api
             .put(
-                &format!("api/feeds/{feed}/rules"),
-                json!([{ "condition": " ", "action": "hide" }]),
+                &path,
+                json!({ "wanted": " science and space ", "unwanted": "soccer news" }),
             )
             .await;
 
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            api.get(&path).await.1,
+            json!({ "wanted": "science and space", "unwanted": "soccer news" })
+        );
+    }
+
+    #[tokio::test]
+    async fn treat_blank_text_as_no_filter() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        let path = format!("api/feeds/{feed}/filters");
+
+        api.put(&path, json!({ "wanted": "  ", "unwanted": "\n" }))
+            .await;
+
+        assert_eq!(
+            api.get(&path).await.1,
+            json!({ "wanted": null, "unwanted": null })
+        );
     }
 
     #[tokio::test]
@@ -1041,16 +1035,17 @@ mod rules {
         let api = start().await;
 
         assert_eq!(
-            api.get("api/feeds/nope/rules").await.0,
+            api.get("api/feeds/nope/filters").await.0,
             StatusCode::NOT_FOUND
         );
     }
 }
 
-mod rules_on_saved_articles {
+mod filters_on_saved_articles {
     use super::*;
 
-    const HIDE_FIRST: &str = r#"[{ "condition": "first posts", "action": "hide" }]"#;
+    const HIDE_FIRST: &str = r#"{ "wanted": null, "unwanted": "first posts" }"#;
+    const NO_FILTERS: &str = r#"{ "wanted": null, "unwanted": null }"#;
 
     async fn eventually(what: &str, check: impl AsyncFn() -> bool) {
         for _ in 0..100 {
@@ -1068,20 +1063,20 @@ mod rules_on_saved_articles {
         titles
     }
 
-    async fn save_rules(api: &Api, feed: &str, rules: &str) {
-        let rules: Value = serde_json::from_str(rules).unwrap();
-        let (status, body) = api.put(&format!("api/feeds/{feed}/rules"), rules).await;
+    async fn save_filters(api: &Api, feed: &str, filters: &str) {
+        let filters: Value = serde_json::from_str(filters).unwrap();
+        let (status, body) = api.put(&format!("api/feeds/{feed}/filters"), filters).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     }
 
     #[tokio::test]
-    async fn remove_the_articles_new_rules_reject() {
+    async fn hide_the_articles_new_filters_reject() {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
         api.turn_on_ai().await;
         api.jev.matches_title("First post");
 
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
 
         eventually("the first post is filtered out", async || {
             !titles(&api, &feed)
@@ -1106,7 +1101,7 @@ mod rules_on_saved_articles {
             .await
             .unwrap();
 
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
 
         let event = tokio::time::timeout(Duration::from_secs(5), async {
             let mut seen = String::new();
@@ -1140,7 +1135,7 @@ mod rules_on_saved_articles {
         api.turn_on_ai().await;
         api.jev.matches_title("First post");
 
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
 
         eventually("every other article is judged", async || {
             api.jev.requests().len() >= 3
@@ -1159,7 +1154,7 @@ mod rules_on_saved_articles {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
 
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         assert_eq!(titles(&api, &feed).await.len(), 4);
@@ -1167,12 +1162,12 @@ mod rules_on_saved_articles {
     }
 
     #[tokio::test]
-    async fn do_not_judge_again_when_the_rules_are_unchanged() {
+    async fn do_not_judge_again_when_the_filters_are_unchanged() {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
         api.turn_on_ai().await;
         api.jev.matches_title("First post");
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
         eventually("the first pass is done", async || {
             titles(&api, &feed).await.len() == 3
         })
@@ -1180,26 +1175,26 @@ mod rules_on_saved_articles {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let asked = api.jev.requests().len();
 
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         assert_eq!(api.jev.requests().len(), asked);
     }
 
     #[tokio::test]
-    async fn bring_back_everything_when_the_rules_are_removed_without_asking_jev() {
+    async fn bring_back_everything_when_the_filters_are_cleared_without_asking_jev() {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
         api.turn_on_ai().await;
         api.jev.matches_title("First post");
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
         eventually("the first post is filtered out", async || {
             titles(&api, &feed).await.len() == 3
         })
         .await;
         let asked = api.jev.requests().len();
 
-        save_rules(&api, &feed, "[]").await;
+        save_filters(&api, &feed, NO_FILTERS).await;
 
         eventually("the first post is back", async || {
             titles(&api, &feed).await.len() == 4
@@ -1221,7 +1216,7 @@ mod rules_on_saved_articles {
         api.turn_on_ai().await;
         api.jev.matches_title("First post");
 
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
         eventually("the first post is filtered out", async || {
             titles(&api, &feed).await.len() == 3
         })
@@ -1233,26 +1228,26 @@ mod rules_on_saved_articles {
     }
 
     #[tokio::test]
-    async fn judge_hidden_articles_again_when_the_rules_change() {
+    async fn judge_hidden_articles_again_when_the_filters_change() {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
         api.turn_on_ai().await;
         api.jev.matches_title("First post");
-        save_rules(&api, &feed, HIDE_FIRST).await;
+        save_filters(&api, &feed, HIDE_FIRST).await;
         eventually("the first post is filtered out", async || {
             titles(&api, &feed).await.len() == 3
         })
         .await;
 
         api.jev.matches_title("Second post");
-        save_rules(
+        save_filters(
             &api,
             &feed,
-            r#"[{ "condition": "second posts", "action": "hide" }]"#,
+            r#"{ "wanted": null, "unwanted": "second posts" }"#,
         )
         .await;
 
-        eventually("the rules swap which post is hidden", async || {
+        eventually("the filters swap which post is hidden", async || {
             let titles = titles(&api, &feed).await;
             titles.contains(&"First post".to_string())
                 && !titles.contains(&"Second post".to_string())
