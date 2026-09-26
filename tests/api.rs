@@ -1093,6 +1093,39 @@ mod rules_on_saved_articles {
     }
 
     #[tokio::test]
+    async fn tell_open_pages_and_lower_the_unread_count() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        api.turn_on_ai().await;
+        api.jev.matches_title("First post");
+        assert_eq!(api.sidebar().await["total_unread"], 4);
+        let mut events = api
+            .client
+            .get(api.base.join("api/events").unwrap())
+            .send()
+            .await
+            .unwrap();
+
+        save_rules(&api, &feed, HIDE_FIRST).await;
+
+        let event = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut seen = String::new();
+            loop {
+                let chunk = events.chunk().await.unwrap().expect("stream ended");
+                seen.push_str(&String::from_utf8_lossy(&chunk));
+                if let Some(line) = seen.lines().find(|l| l.contains("feed_filtered")) {
+                    return line.to_string();
+                }
+            }
+        })
+        .await
+        .expect("no feed_filtered event");
+        assert!(event.contains(&format!(r#""feed":"{feed}""#)), "{event}");
+        assert!(event.contains(r#""hidden":1"#), "{event}");
+        assert_eq!(api.sidebar().await["total_unread"], 3);
+    }
+
+    #[tokio::test]
     async fn keep_starred_articles() {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
