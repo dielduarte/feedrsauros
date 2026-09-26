@@ -249,6 +249,12 @@
         list-style: none;
       }
 
+      /* Four practical points read better as two pairs than as a row of three and one alone. */
+      .peace.pairs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 40px 64px;
+      }
+
       .peace h3 {
         margin: 0 0 10px;
         font-size: 24px;
@@ -408,6 +414,7 @@
         }
 
         .peace,
+        .peace.pairs,
         .install {
           grid-template-columns: minmax(0, 1fr);
         }
@@ -480,28 +487,21 @@
         </figure>
 
         <section id="peace" aria-labelledby="peace-title">
-          <h2 id="peace-title">Read in peace.</h2>
+          <h2 id="peace-title">Read in peace, smartly.</h2>
           <ul class="peace">
             <li>
-              <h3>Nothing pulls at you.</h3>
-              <p>No ads, no recommendations, no &ldquo;you might also like.&rdquo; Articles, and nothing wrapped around them.</p>
+              <h3>It finds the folder.</h3>
+              <p>Make your own folders once. Every site you add after that goes into the one of yours it fits best.</p>
             </li>
             <li>
-              <h3>It ends.</h3>
-              <p>Your list is finite. Read it, mark it done, close it. There&rsquo;s no bottom to scroll toward.</p>
+              <h3>It filters the noise.</h3>
+              <p>Tell each feed what you want to see and what you don&rsquo;t, in your own words. The rest stays out of your list.</p>
             </li>
             <li>
-              <h3>It waits.</h3>
-              <p>No push notifications, no badges begging for you. New articles are simply there when you come back.</p>
+              <h3>It keeps what matters.</h3>
+              <p>Star an article to keep it close. Your starred list is one click away, and filters never touch it.</p>
             </li>
           </ul>
-        </section>
-        <section aria-labelledby="chosen-title">
-          <h2 id="chosen-title">Only what you chose.</h2>
-          <p class="lede">
-            You pick the sites and feedrsauros keeps up with them. Nothing is ranked and nothing is hidden. Paste a
-            site&rsquo;s address and it finds the feed for you.
-          </p>
         </section>
         <section aria-labelledby="reading-title">
           <div class="reading">
@@ -523,16 +523,32 @@
             </figure>
           </div>
         </section>
-        <section aria-labelledby="yours-title">
-          <h2 id="yours-title">Yours.</h2>
-          <p class="lede">
-            No account. Everything lives in one file on your machine, and the code is open source. Take your
-            subscriptions with you as OPML whenever you like.
-          </p>
-          <p class="small-things">
-            And the small things: folders you arrange, <kbd>J</kbd> <kbd>K</kbd> <kbd>S</kbd> <kbd>M</kbd> from the
-            keyboard, new articles without reloading.
-          </p>
+        <section aria-labelledby="way-title">
+          <h2 id="way-title">Your reader, your way.</h2>
+          <ul class="peace pairs">
+            <li>
+              <h3>Desktop, web or terminal.</h3>
+              <p>
+                A desktop app, a self-hosted web version, or the command line. Scripts and AI agents can use the CLI
+                too (<code>feedrsauros add &hellip;</code>), and whatever they add shows up in the app right away.
+              </p>
+            </li>
+            <li>
+              <h3>Keyboard shortcuts.</h3>
+              <p>
+                <kbd>J</kbd> and <kbd>K</kbd> to move, <kbd>S</kbd> to star, <kbd>M</kbd> to mark read, <kbd>V</kbd> to
+                open the original. Or just use the mouse.
+              </p>
+            </li>
+            <li>
+              <h3>No account, local, open source.</h3>
+              <p>Everything stays on your machine, and the code is on GitHub for anyone to read.</p>
+            </li>
+            <li>
+              <h3>Leave any time.</h3>
+              <p>Import and export your subscriptions as OPML, so moving in or out takes a minute.</p>
+            </li>
+          </ul>
         </section>
         <section id="install" aria-labelledby="install-title">
           <h2 id="install-title">Start reading.</h2>
