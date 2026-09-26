@@ -115,12 +115,18 @@ async fn start() -> Api {
     let db = Db::open(&dir.path().join("feedrsauros.db")).await.unwrap();
     let fetcher = Fetcher::new(Duration::from_secs(5));
     let cancel = CancellationToken::new();
-    let (poller, _) = poller::spawn(db.clone(), fetcher.clone(), cancel.clone());
+    let typesafe = jev_base.join("v1/systemone").unwrap();
+    let (poller, _) = poller::spawn(
+        db.clone(),
+        fetcher.clone(),
+        typesafe.clone(),
+        cancel.clone(),
+    );
     let base = listen(api::router(AppState {
         db,
         fetcher,
         poller,
-        typesafe: jev_base.join("v1/systemone").unwrap(),
+        typesafe,
     }))
     .await;
     Api {
@@ -955,5 +961,64 @@ mod ai_folders {
         api.subscribe("a.xml", Some(&rust)).await;
 
         assert!(api.jev.requests().is_empty());
+    }
+}
+
+mod rules {
+    use super::*;
+
+    #[tokio::test]
+    async fn start_empty_and_keep_what_is_saved() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        let path = format!("api/feeds/{feed}/rules");
+        assert_eq!(api.get(&path).await.1, json!([]));
+        let rules = json!([
+            { "condition": "soccer news", "action": "hide" },
+            { "condition": "science", "action": "keep_only" }
+        ]);
+
+        let (status, _) = api.put(&path, rules.clone()).await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(api.get(&path).await.1, rules);
+    }
+
+    #[tokio::test]
+    async fn replace_the_whole_list() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        let path = format!("api/feeds/{feed}/rules");
+        api.put(&path, json!([{ "condition": "soccer", "action": "hide" }]))
+            .await;
+
+        api.put(&path, json!([])).await;
+
+        assert_eq!(api.get(&path).await.1, json!([]));
+    }
+
+    #[tokio::test]
+    async fn refuse_a_rule_without_a_condition() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+
+        let (status, _) = api
+            .put(
+                &format!("api/feeds/{feed}/rules"),
+                json!([{ "condition": " ", "action": "hide" }]),
+            )
+            .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn belong_to_an_existing_feed() {
+        let api = start().await;
+
+        assert_eq!(
+            api.get("api/feeds/nope/rules").await.0,
+            StatusCode::NOT_FOUND
+        );
     }
 }

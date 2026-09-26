@@ -18,7 +18,7 @@ import { useStoredState } from '@/hooks/use-stored-state'
 import { cn } from '@/lib/utils'
 import type { Sidebar as SidebarData, SidebarFeed, SidebarFolder } from '../../api'
 import { useRefresh } from '../../poller'
-import { useSubscriptionActions } from '../../queries'
+import { useSettings, useSubscriptionActions } from '../../queries'
 import { scopePath, type Scope } from '../../routes'
 import type { DialogName } from '../dialogs'
 import { FeedIcon } from '../FeedIcon'
@@ -33,6 +33,7 @@ type Props = {
   sidebar: SidebarData | undefined
   onNavigate: (scope: Scope) => void
   onOpenSettings: () => void
+  onOpenRules: (feed: string) => void
   onOpenDialog: (dialog: DialogName) => void
   /** A feed or folder was renamed, so its URL changed. */
   onRenamed: (from: Scope, to: Scope) => void
@@ -44,9 +45,10 @@ const dropLine =
 const isActive = (current: Scope | null, candidate: Scope) => current !== null && scopePath(current) === scopePath(candidate)
 
 /** Memoized: it only depends on the sidebar data and where you are, not on the article list. */
-export const AppSidebar = memo(function AppSidebar({ scope, sidebar, onNavigate, onOpenSettings, onOpenDialog, onRenamed }: Props) {
+export const AppSidebar = memo(function AppSidebar({ scope, sidebar, onNavigate, onOpenSettings, onOpenRules, onOpenDialog, onRenamed }: Props) {
   const actions = useSubscriptionActions()
   const refresh = useRefresh()
+  const aiEnabled = useSettings().data?.ai_enabled ?? false
   const [collapsed, setCollapsed] = useStoredState<string[]>('collapsedFolders', [])
   const [renaming, setRenaming] = useState<string | null>(null)
   const [creatingFolder, setCreatingFolder] = useState(false)
@@ -91,6 +93,7 @@ export const AppSidebar = memo(function AppSidebar({ scope, sidebar, onNavigate,
         setRenaming(null)
       }}
       onRefresh={() => refresh({ kind: 'feed', slug: feed.slug })}
+      onRules={aiEnabled ? () => onOpenRules(feed.slug) : undefined}
       onRemove={() => setRemoval({ kind: 'feed', feed })}
     />
   )
@@ -259,10 +262,11 @@ type FeedRowProps = {
   onRename: () => void
   onRenamed: (title: string | undefined) => void
   onRefresh: () => void
+  onRules: (() => void) | undefined
   onRemove: () => void
 }
 
-function FeedRow({ feed, nested, active, renaming, dropBefore, dragProps, onOpen, onRename, onRenamed, onRefresh, onRemove }: FeedRowProps) {
+function FeedRow({ feed, nested, active, renaming, dropBefore, dragProps, onOpen, onRename, onRenamed, onRefresh, onRules, onRemove }: FeedRowProps) {
   return (
     <SidebarMenuItem className={cn(nested && 'pl-4', dropBefore && dropLine)} draggable={!renaming && !feed.pending} {...dragProps}>
       {feed.pending ? (
@@ -284,6 +288,7 @@ function FeedRow({ feed, nested, active, renaming, dropBefore, dragProps, onOpen
             label={feed.title}
             onRename={onRename}
             onRefresh={onRefresh}
+            onRules={onRules}
             destructiveLabel="Unsubscribe…"
             onDestroy={onRemove}
           />

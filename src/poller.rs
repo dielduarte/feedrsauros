@@ -13,7 +13,10 @@ use url::Url;
 
 use crate::db::{Db, DbError, Feed, FetchRecord};
 use crate::fetch::{FetchError, Fetched, Fetcher};
+use crate::jev::Jev;
 use crate::model::FeedScope;
+use crate::parse::ParsedFeed;
+use crate::rules::keeps;
 use crate::schedule::{Attempt, HISTORY, adaptive_interval, next_fetch_at};
 
 pub const CONCURRENCY: usize = 8;
@@ -96,9 +99,11 @@ impl PollerHandle {
     }
 }
 
+/// `typesafe` is where Jev is asked to apply feed rules, while AI features are on.
 pub fn spawn(
     db: Db,
     fetcher: Fetcher,
+    typesafe: Url,
     cancel: CancellationToken,
 ) -> (PollerHandle, JoinHandle<()>) {
     let (events, _) = broadcast::channel(256);
@@ -115,6 +120,7 @@ pub fn spawn(
             run(
                 db.clone(),
                 fetcher,
+                typesafe,
                 wake,
                 events.clone(),
                 active.subscribe(),
@@ -152,6 +158,7 @@ fn try_lock_polling(db: &Path) -> Option<File> {
 async fn run(
     db: Db,
     fetcher: Fetcher,
+    typesafe: Url,
     wake: Arc<Notify>,
     events: broadcast::Sender<PollerEvent>,
     mut active: watch::Receiver<bool>,
@@ -179,7 +186,14 @@ async fn run(
         let batch = async {
             match db.feeds_due(now).await {
                 Ok(due) if !due.is_empty() => {
-                    run_batch(&db, &fetcher, due, now, &events).await;
+                    // Read per batch, so turning AI on or off applies from the next one.
+                    let jev = Jev::from_settings(&db, typesafe.clone())
+                        .await
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(%error, "could not read the AI settings");
+                            None
+                        });
+                    run_batch(&db, &fetcher, jev.as_ref(), due, now, &events).await;
                 }
                 Ok(_) => {}
                 Err(error) => tracing::warn!(%error, "could not load due feeds"),
@@ -228,6 +242,44 @@ async fn watch_other_writers(
     }
 }
 
+/// Keeps out the new articles the feed's rules reject. Each article is judged once: whatever a
+/// rule kept out is remembered, and whatever was kept is stored. If Jev can't be reached, the
+/// article is kept, so AI never loses anything.
+async fn apply_rules(
+    db: &Db,
+    jev: Option<&Jev>,
+    feed: &Feed,
+    parsed: &mut ParsedFeed,
+) -> Result<(), DbError> {
+    let filtered = db.filtered_guids(feed.id).await?;
+    parsed.items.retain(|item| !filtered.contains(&item.guid));
+    let Some(jev) = jev else { return Ok(()) };
+    let rules = db.rules(feed.id).await?;
+    if rules.is_empty() {
+        return Ok(());
+    }
+
+    let known = db.known_guids(feed.id).await?;
+    let mut rejected: Vec<&str> = Vec::new();
+    for article in parsed
+        .items
+        .iter()
+        .filter(|item| !known.contains(&item.guid))
+    {
+        match jev.matches(&rules, &parsed.title, article).await {
+            Ok(matched) if !keeps(&rules, &matched) => rejected.push(&article.guid),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, feed = %feed.url, "could not check an article against the feed's rules");
+            }
+        }
+    }
+    db.remember_filtered(feed.id, &rejected).await?;
+    let rejected: HashSet<String> = rejected.into_iter().map(str::to_owned).collect();
+    parsed.items.retain(|item| !rejected.contains(&item.guid));
+    Ok(())
+}
+
 async fn time_until_next_due(db: &Db) -> Duration {
     match db.next_due_at().await {
         Ok(Some(at)) => (at - Utc::now()).to_std().unwrap_or(Duration::ZERO),
@@ -242,9 +294,11 @@ async fn time_until_next_due(db: &Db) -> Duration {
 
 /// Fetches concurrently, but stores results from this task only: SQLite has a single writer,
 /// so funnelling writes here avoids lock contention between fetches.
+/// `jev` applies each feed's rules to its new articles; without it rules are skipped.
 pub async fn run_batch(
     db: &Db,
     fetcher: &Fetcher,
+    jev: Option<&Jev>,
     feeds: Vec<Feed>,
     now: DateTime<Utc>,
     events: &broadcast::Sender<PollerEvent>,
@@ -287,7 +341,7 @@ pub async fn run_batch(
             }
             Ok(fetched) => {
                 reached_server = true;
-                if let Err(error) = record_success(db, &feed, fetched, now, events).await {
+                if let Err(error) = record_success(db, jev, &feed, fetched, now, events).await {
                     tracing::warn!(%error, feed = %feed.url, "could not store fetch");
                 }
             }
@@ -345,6 +399,7 @@ async fn probe(
 
 async fn record_success(
     db: &Db,
+    jev: Option<&Jev>,
     feed: &Feed,
     fetched: Fetched,
     now: DateTime<Utc>,
@@ -352,10 +407,11 @@ async fn record_success(
 ) -> Result<(), DbError> {
     let new_items = match fetched {
         Fetched::Updated {
-            feed: parsed,
+            feed: mut parsed,
             validators,
             moved_to,
         } => {
+            apply_rules(db, jev, feed, &mut parsed).await?;
             let published: Vec<_> = parsed.items.iter().map(|i| i.published_at).collect();
             let next = next_fetch_at(
                 Attempt::Succeeded,

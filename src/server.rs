@@ -26,14 +26,20 @@ pub async fn start(db: Db, listener: TcpListener) -> anyhow::Result<Server> {
         .context("could not read the listening address")?;
     let fetcher = Fetcher::new(DEFAULT_TIMEOUT);
     let cancel = CancellationToken::new();
-    let (poller, poller_task) = poller::spawn(db.clone(), fetcher.clone(), cancel.clone());
+    let typesafe: url::Url = jev::ENDPOINT
+        .parse()
+        .expect("the TypeSafe endpoint is a valid URL");
+    let (poller, poller_task) = poller::spawn(
+        db.clone(),
+        fetcher.clone(),
+        typesafe.clone(),
+        cancel.clone(),
+    );
     let app = api::router(AppState {
         db,
         fetcher,
         poller: poller.clone(),
-        typesafe: jev::ENDPOINT
-            .parse()
-            .expect("the TypeSafe endpoint is a valid URL"),
+        typesafe,
     });
     let stopping = cancel.clone();
     let task = tokio::spawn(async move {

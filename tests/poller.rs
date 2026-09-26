@@ -1,18 +1,21 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::Redirect;
-use axum::routing::get;
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use chrono::{DateTime, TimeZone, Utc};
-use feedrsauros::db::{Db, Feed, FetchRecord, NewFeed};
+use feedrsauros::db::{Db, Feed, FetchRecord, ItemQuery, ItemScope, NewFeed};
 use feedrsauros::fetch::Fetcher;
+use feedrsauros::jev::Jev;
 use feedrsauros::model::{FeedId, FeedScope};
 use feedrsauros::poller::{self, BatchHealth, PER_HOST, PollerEvent, run_batch};
+use feedrsauros::rules::{Rule, RuleAction};
 use feedrsauros::schedule::POLL_INTERVAL;
+use serde_json::{Map, Value, json};
 use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
@@ -23,6 +26,8 @@ struct Traffic {
     requests: AtomicUsize,
     in_flight: AtomicUsize,
     max_in_flight: AtomicUsize,
+    jev_requests: AtomicUsize,
+    jev_down: AtomicBool,
 }
 
 struct Env {
@@ -30,6 +35,8 @@ struct Env {
     fetcher: Fetcher,
     base: Url,
     traffic: Arc<Traffic>,
+    /// A stand-in for TypeSafe's API, served next to the feeds.
+    jev: Url,
     _dir: TempDir,
 }
 
@@ -59,6 +66,26 @@ async fn slow_feed(State(traffic): State<Arc<Traffic>>, Path(_name): Path<String
     rss2()
 }
 
+/// Says every rule matches "First post" and nothing else.
+async fn fake_jev(State(traffic): State<Arc<Traffic>>, Json(body): Json<Value>) -> Response {
+    traffic.jev_requests.fetch_add(1, Ordering::SeqCst);
+    if traffic.jev_down.load(Ordering::SeqCst) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let hit = body["state"]["article"]["title"] == "First post";
+    let answers: Map<String, Value> = body["questions"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|id| {
+            let yes = if hit { 0.97 } else { 0.03 };
+            (id.clone(), json!({ "type": "noul", "noul": yes }))
+        })
+        .collect();
+    Json(json!({ "model": "jev-1.13.0", "answers": answers, "usage": { "input_tokens": 1, "output_tokens": 1 } }))
+        .into_response()
+}
+
 async fn env() -> Env {
     let traffic = Arc::new(Traffic::default());
     let app = Router::new()
@@ -66,6 +93,7 @@ async fn env() -> Env {
         .route("/slow/{name}", get(slow_feed))
         .route("/missing", get(|| async { StatusCode::NOT_FOUND }))
         .route("/old", get(|| async { Redirect::permanent("/feeds/new") }))
+        .route("/v1/systemone", post(fake_jev))
         .with_state(traffic.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
@@ -75,6 +103,7 @@ async fn env() -> Env {
     Env {
         db: Db::open(&dir.path().join("feedrsauros.db")).await.unwrap(),
         fetcher: Fetcher::new(Duration::from_secs(5)),
+        jev: base.join("v1/systemone").unwrap(),
         base,
         traffic,
         _dir: dir,
@@ -120,12 +149,52 @@ impl Env {
 
     async fn batch(&self, feeds: Vec<Feed>) -> (BatchHealth, Vec<PollerEvent>) {
         let (events, mut received) = broadcast::channel(64);
-        let health = run_batch(&self.db, &self.fetcher, feeds, now(), &events).await;
+        let jev = Jev::from_settings(&self.db, self.jev.clone())
+            .await
+            .unwrap();
+        let health = run_batch(&self.db, &self.fetcher, jev.as_ref(), feeds, now(), &events).await;
         let mut all = Vec::new();
         while let Ok(event) = received.try_recv() {
             all.push(event);
         }
         (health, all)
+    }
+
+    async fn turn_on_ai(&self) {
+        self.db.set_api_key("ts_test_key").await.unwrap();
+        self.db.set_ai_enabled(true).await.unwrap();
+    }
+
+    async fn hide_first_posts(&self, feed: FeedId) {
+        let rule = Rule {
+            condition: "first posts".into(),
+            action: RuleAction::Hide,
+        };
+        self.db.set_rules(feed, &[rule]).await.unwrap();
+    }
+
+    async fn titles(&self, feed: FeedId) -> Vec<String> {
+        let query = ItemQuery {
+            scope: ItemScope::Feed(feed),
+            unread_only: false,
+            cursor: None,
+            limit: 50,
+        };
+        let mut titles: Vec<String> = self
+            .db
+            .list_items(query)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .filter_map(|item| item.title)
+            .collect();
+        titles.sort();
+        titles
+    }
+
+    fn jev_requests(&self) -> usize {
+        self.traffic.jev_requests.load(Ordering::SeqCst)
     }
 
     async fn stored(&self, id: FeedId) -> Feed {
@@ -280,7 +349,12 @@ mod background {
         tokio::task::JoinHandle<()>,
     ) {
         let cancel = CancellationToken::new();
-        let (handle, task) = poller::spawn(env.db.clone(), env.fetcher.clone(), cancel.clone());
+        let (handle, task) = poller::spawn(
+            env.db.clone(),
+            env.fetcher.clone(),
+            env.jev.clone(),
+            cancel.clone(),
+        );
         (handle, cancel, task)
     }
 
@@ -382,6 +456,7 @@ mod background {
         let (_second, _second_task) = poller::spawn(
             other_process(&env).await,
             env.fetcher.clone(),
+            env.jev.clone(),
             other.clone(),
         );
 
@@ -403,6 +478,7 @@ mod background {
         let (second, _second_task) = poller::spawn(
             other_process(&env).await,
             env.fetcher.clone(),
+            env.jev.clone(),
             other.clone(),
         );
 
@@ -456,5 +532,88 @@ mod background {
             .await
             .unwrap()
             .unwrap();
+    }
+}
+
+mod rules {
+    use super::*;
+
+    const ALL_POSTS: [&str; 4] = [
+        "Another linkless note",
+        "First post",
+        "Linkless note",
+        "Second post",
+    ];
+
+    #[tokio::test]
+    async fn hide_new_articles_a_rule_matches() {
+        let env = env().await;
+        let feed = env.add_path("feeds/a").await;
+        env.turn_on_ai().await;
+        env.hide_first_posts(feed.id).await;
+
+        env.batch(vec![feed.clone()]).await;
+
+        assert_eq!(
+            env.titles(feed.id).await,
+            ["Another linkless note", "Linkless note", "Second post"]
+        );
+        assert_eq!(env.jev_requests(), 4, "one request per new article");
+    }
+
+    #[tokio::test]
+    async fn do_not_ask_again_about_articles_already_judged() {
+        let env = env().await;
+        let feed = env.add_path("feeds/a").await;
+        env.turn_on_ai().await;
+        env.hide_first_posts(feed.id).await;
+        env.batch(vec![feed.clone()]).await;
+
+        env.batch(vec![feed.clone()]).await;
+
+        assert_eq!(env.jev_requests(), 4);
+        assert!(
+            !env.titles(feed.id)
+                .await
+                .contains(&"First post".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn keep_every_article_while_ai_is_off() {
+        let env = env().await;
+        let feed = env.add_path("feeds/a").await;
+        env.db.set_api_key("ts_test_key").await.unwrap();
+        env.hide_first_posts(feed.id).await;
+
+        env.batch(vec![feed.clone()]).await;
+
+        assert_eq!(env.titles(feed.id).await, ALL_POSTS);
+        assert_eq!(env.jev_requests(), 0);
+    }
+
+    #[tokio::test]
+    async fn keep_articles_when_jev_fails() {
+        let env = env().await;
+        let feed = env.add_path("feeds/a").await;
+        env.turn_on_ai().await;
+        env.hide_first_posts(feed.id).await;
+        env.traffic.jev_down.store(true, Ordering::SeqCst);
+
+        env.batch(vec![feed.clone()]).await;
+
+        assert_eq!(env.titles(feed.id).await, ALL_POSTS);
+    }
+
+    #[tokio::test]
+    async fn do_not_ask_jev_about_feeds_without_rules() {
+        let env = env().await;
+        let feed = env.add_path("feeds/a").await;
+        env.turn_on_ai().await;
+
+        env.batch(vec![feed.clone()]).await;
+
+        assert_eq!(env.titles(feed.id).await, ALL_POSTS);
+        assert_eq!(env.jev_requests(), 0);
     }
 }

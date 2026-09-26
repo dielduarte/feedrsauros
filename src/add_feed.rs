@@ -4,7 +4,7 @@ use url::Url;
 use crate::db::{Db, DbError, Folder, NewFeed};
 use crate::discover::{COMMON_FEED_PATHS, feed_links};
 use crate::fetch::{FetchError, Fetched, Fetcher};
-use crate::jev::FolderPicker;
+use crate::jev::Jev;
 use crate::model::{FeedId, FolderId, Validators};
 use crate::parse::{ParsedFeed, parse};
 use crate::schedule::POLL_INTERVAL;
@@ -25,7 +25,7 @@ pub enum Placement<'a> {
     Folder(FolderId),
     Unfiled,
     /// The folder Jev judges best, or unfiled if none fits or Jev can't be reached.
-    BestFit(&'a FolderPicker),
+    BestFit(&'a Jev),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -109,7 +109,7 @@ async fn subscribe(
     let (folder, ai_folder) = match placement {
         Placement::Folder(id) => (Some(id), None),
         Placement::Unfiled => (None, None),
-        Placement::BestFit(picker) => match best_fit(db, picker, &feed, &url).await? {
+        Placement::BestFit(jev) => match best_fit(db, jev, &feed, &url).await? {
             Some(folder) => (Some(folder.id), Some(folder.slug)),
             None => (None, None),
         },
@@ -135,7 +135,7 @@ async fn subscribe(
 /// Adding a feed never fails because of AI: if Jev can't help, the feed is simply left unfiled.
 async fn best_fit(
     db: &Db,
-    picker: &FolderPicker,
+    jev: &Jev,
     feed: &ParsedFeed,
     url: &Url,
 ) -> Result<Option<Folder>, AddFeedError> {
@@ -143,7 +143,7 @@ async fn best_fit(
     if folders.is_empty() {
         return Ok(None);
     }
-    match picker.pick(&folders, feed, url).await {
+    match jev.pick_folder(&folders, feed, url).await {
         Ok(folder) => Ok(folder),
         Err(error) => {
             tracing::warn!(%error, "could not ask Jev for a folder");

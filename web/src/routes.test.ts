@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SETTINGS_PATH, articlePath, parseLocation, scopePath, type Scope } from './routes'
+import { SETTINGS_PATH, articlePath, parseLocation, rulesPath, scopePath, type Scope } from './routes'
 
 const scopes: Scope[] = [
   { kind: 'all' },
@@ -36,6 +36,15 @@ describe('routes', () => {
   it('has a page for settings', () => {
     expect(parseLocation(SETTINGS_PATH)).toEqual({ page: 'settings' })
     expect(parseLocation('/settings/nope')).toEqual({ scope: { kind: 'all' }, article: null })
+  })
+
+  it('has a rules page per feed, apart from its articles', () => {
+    expect(rulesPath('cloudflare-blog')).toBe('/rules/cloudflare-blog')
+    expect(parseLocation(rulesPath('cloudflare-blog'))).toEqual({ page: 'rules', feed: 'cloudflare-blog' })
+    expect(parseLocation('/feeds/cloudflare-blog/rules')).toEqual({
+      scope: { kind: 'feed', slug: 'cloudflare-blog' },
+      article: { feed: 'cloudflare-blog', slug: 'rules' },
+    })
   })
 
   it('falls back to all articles for unknown paths', () => {

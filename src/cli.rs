@@ -11,7 +11,7 @@ use tokio::sync::broadcast::{self, error::RecvError};
 use crate::add_feed::{Placement, add_feed, parse_input};
 use crate::db::{Db, SidebarFeed};
 use crate::fetch::{DEFAULT_TIMEOUT, Fetcher};
-use crate::jev::{self, FolderPicker};
+use crate::jev::{self, Jev};
 use crate::model::FeedScope;
 use crate::opml;
 use crate::poller::{BatchHealth, PollerEvent, run_batch};
@@ -137,10 +137,10 @@ async fn shutdown_signal() {
 
 async fn add(db: Db, input: &str, folder: Option<String>) -> anyhow::Result<()> {
     let url = parse_input(input).with_context(|| format!("not a web address: {input}"))?;
-    let picker = FolderPicker::from_settings(&db, jev::ENDPOINT.parse()?).await?;
-    let placement = match (folder, &picker) {
+    let jev = Jev::from_settings(&db, jev::ENDPOINT.parse()?).await?;
+    let placement = match (folder, &jev) {
         (Some(name), _) => Placement::Folder(db.ensure_folder(&name).await?.id),
-        (None, Some(picker)) => Placement::BestFit(picker),
+        (None, Some(jev)) => Placement::BestFit(jev),
         (None, None) => Placement::Unfiled,
     };
     let fetcher = Fetcher::new(DEFAULT_TIMEOUT);
@@ -195,7 +195,16 @@ async fn refresh(db: Db) -> anyhow::Result<()> {
         }
     });
 
-    let health = run_batch(&db, &Fetcher::new(DEFAULT_TIMEOUT), feeds, now, &events).await;
+    let jev = Jev::from_settings(&db, jev::ENDPOINT.parse()?).await?;
+    let health = run_batch(
+        &db,
+        &Fetcher::new(DEFAULT_TIMEOUT),
+        jev.as_ref(),
+        feeds,
+        now,
+        &events,
+    )
+    .await;
     drop(events);
     let (new_items, failed) = printer.await?;
 

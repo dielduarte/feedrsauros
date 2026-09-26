@@ -10,12 +10,13 @@ import { AppSidebar } from './components/sidebar/AppSidebar'
 import { scopeLabel } from './lookup'
 import { ListPage } from './pages/ListPage'
 import { ReaderPage } from './pages/ReaderPage'
+import { RulesPage } from './pages/RulesPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { usePollerStatus, useRefresh, useServerEvents } from './poller'
 import { sentence } from './format'
 import { hostOf, pendingSlug } from './pending'
 import { useAddFeed, useLookup, useSidebarData } from './queries'
-import { type ArticleRef, SETTINGS_PATH, articleKey, articlePath, isReading, parseLocation, scopePath, type Scope } from './routes'
+import { type ArticleRef, SETTINGS_PATH, articleKey, articlePath, isReading, parseLocation, rulesPath, scopePath, type Scope } from './routes'
 
 export function App() {
   const [open, setOpen] = useStoredState('sidebarOpen', true)
@@ -33,12 +34,11 @@ function Shell() {
   const [path, setPath] = useLocation()
   // Parsed once per URL so `scope` keeps its identity and memoized children don't re-render.
   const location = useMemo(() => parseLocation(path), [path])
-  const reading = isReading(location) ? location : null
-  const article = reading?.article ?? null
+  const article = isReading(location) ? location.article : null
   // An article has one URL wherever it was opened from; the list it came from rides along in
   // history state, so the switcher, J/K and Back keep working within that list.
-  const scope = useMemo(() => {
-    if (!isReading(location)) return ALL
+  const scope = useMemo((): Scope => {
+    if (!isReading(location)) return location.page === 'rules' ? { kind: 'feed', slug: location.feed } : ALL
     const listPath: unknown = window.history.state?.listPath
     const list = location.article && typeof listPath === 'string' ? parseLocation(listPath) : location
     return isReading(list) ? list.scope : location.scope
@@ -90,6 +90,13 @@ function Shell() {
     setPath(SETTINGS_PATH)
     if (isMobile) setOpenMobile(false)
   }, [setPath, isMobile, setOpenMobile])
+  const openRules = useCallback(
+    (feed: string) => {
+      setPath(rulesPath(feed))
+      if (isMobile) setOpenMobile(false)
+    },
+    [setPath, isMobile, setOpenMobile],
+  )
   const closeDialog = useCallback(() => {
     setDialog(null)
     setAddDraft(null)
@@ -144,17 +151,22 @@ function Shell() {
   return (
     <>
       <AppSidebar
-        scope={reading === null ? null : scope}
+        scope={isReading(location) || location.page === 'rules' ? scope : null}
         sidebar={sidebar}
         onNavigate={navigate}
         onOpenSettings={openSettings}
+        onOpenRules={openRules}
         onOpenDialog={setDialog}
         onRenamed={followRename}
       />
 
       <SidebarInset className="h-dvh min-w-0 overflow-hidden md:h-[calc(100dvh-1rem)] md:border md:shadow-[0_1px_2px_rgb(0_0_0/0.03),0_18px_40px_-20px_rgb(0_0_0/0.12)]">
-        {reading === null ? (
-          <SettingsPage chrome={chrome} />
+        {!isReading(location) ? (
+          location.page === 'settings' ? (
+            <SettingsPage chrome={chrome} />
+          ) : (
+            <RulesPage chrome={chrome} feed={location.feed} />
+          )
         ) : article === null ? (
           <ListPage
             // A new scope starts with a fresh selection.

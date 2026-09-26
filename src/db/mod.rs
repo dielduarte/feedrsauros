@@ -2,6 +2,7 @@ mod feeds;
 mod folders;
 mod items;
 mod polling;
+mod rules;
 mod settings;
 mod sidebar;
 

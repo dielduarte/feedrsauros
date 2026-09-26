@@ -52,12 +52,18 @@ async fn streams_poller_events_to_the_browser() {
     let db = Db::open(&dir.path().join("feedrsauros.db")).await.unwrap();
     let cancel = CancellationToken::new();
     let fetcher = Fetcher::new(Duration::from_secs(5));
-    let (poller, _task) = poller::spawn(db.clone(), fetcher.clone(), cancel.clone());
+    let typesafe: Url = "http://127.0.0.1:9/".parse().unwrap();
+    let (poller, _task) = poller::spawn(
+        db.clone(),
+        fetcher.clone(),
+        typesafe.clone(),
+        cancel.clone(),
+    );
     let app = listen(api::router(AppState {
         db: db.clone(),
         fetcher,
         poller: poller.clone(),
-        typesafe: "http://127.0.0.1:9/".parse().unwrap(),
+        typesafe,
     }))
     .await;
 

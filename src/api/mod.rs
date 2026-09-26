@@ -4,6 +4,7 @@ mod feeds;
 mod folders;
 mod items;
 mod opml;
+mod rules;
 mod settings;
 mod web;
 
@@ -43,6 +44,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/feeds/{slug}/position", put(feeds::move_to))
         .route("/api/feeds/{slug}/title", put(feeds::rename))
+        .route(
+            "/api/feeds/{slug}/rules",
+            get(rules::list).put(rules::replace),
+        )
         .route(
             "/api/feeds/{feed}/items/{item}",
             get(items::open).patch(items::update),
