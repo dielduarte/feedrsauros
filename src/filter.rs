@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use tokio::sync::Semaphore;
@@ -8,30 +7,30 @@ use crate::db::{Db, DbError, Feed};
 use crate::jev::{Article, Jev};
 use crate::model::FeedId;
 use crate::parse::ParsedFeed;
-use crate::rules::keeps;
+use crate::rules::{Rule, keeps};
 
-/// Articles judged at once when new rules go over the whole list.
+/// Articles judged at once when rules go over a whole feed.
 const CONCURRENCY: usize = 4;
 
-/// Keeps out the new articles the feed's rules reject. Each article is judged once: whatever a
-/// rule kept out is remembered, and whatever was kept is stored. If Jev can't be reached, the
-/// article is kept, so AI never loses anything.
-pub async fn filter_new(
+/// Guids of the fetched articles the feed's rules reject, to hide once they're stored. Only
+/// articles new to the feed are judged, and if Jev can't be reached an article is kept, so AI
+/// never loses anything.
+pub async fn rejected_new(
     db: &Db,
     jev: Option<&Jev>,
     feed: &Feed,
-    parsed: &mut ParsedFeed,
-) -> Result<(), DbError> {
-    let filtered = db.filtered_guids(feed.id).await?;
-    parsed.items.retain(|item| !filtered.contains(&item.guid));
-    let Some(jev) = jev else { return Ok(()) };
+    parsed: &ParsedFeed,
+) -> Result<Vec<String>, DbError> {
+    let Some(jev) = jev else {
+        return Ok(Vec::new());
+    };
     let rules = db.rules(feed.id).await?;
     if rules.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let known = db.known_guids(feed.id).await?;
-    let mut rejected: Vec<&str> = Vec::new();
+    let mut rejected = Vec::new();
     for article in parsed
         .items
         .iter()
@@ -42,28 +41,34 @@ pub async fn filter_new(
             summary: article.summary.as_deref(),
         };
         match jev.matches(&rules, &parsed.title, judged).await {
-            Ok(matched) if !keeps(&rules, &matched) => rejected.push(&article.guid),
+            Ok(matched) if !keeps(&rules, &matched) => rejected.push(article.guid.clone()),
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(%error, feed = %feed.url, "could not check an article against the feed's rules");
             }
         }
     }
-    db.remember_filtered(feed.id, &rejected).await?;
-    let rejected: HashSet<String> = rejected.into_iter().map(str::to_owned).collect();
-    parsed.items.retain(|item| !rejected.contains(&item.guid));
-    Ok(())
+    Ok(rejected)
 }
 
-/// Runs a feed's rules over the articles already in its list, once, when the rules change.
-/// Returns how many were taken out. Starred articles stay; anything Jev can't judge stays too.
-pub async fn filter_saved(db: &Db, jev: &Jev, feed: FeedId) -> Result<usize, DbError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Changed {
+    pub hidden: u64,
+    pub shown: u64,
+}
+
+/// Runs a feed's changed rules over every article it has stored, hidden ones included, and
+/// hides or brings back whichever the new verdict differs for. Starred articles are left alone,
+/// and an article Jev can't judge keeps its current state.
+pub async fn reapply(db: &Db, jev: &Jev, feed: FeedId) -> Result<Changed, DbError> {
     let rules = db.rules(feed).await?;
     if rules.is_empty() {
-        return Ok(0);
+        let shown = db.show_all(feed).await?;
+        return Ok(Changed { hidden: 0, shown });
     }
-    let (site, articles) = db.unstarred_articles(feed).await?;
-    let (rules, site) = (Arc::new(rules), Arc::new(site));
+
+    let (site, articles) = db.judgeable_articles(feed).await?;
+    let (rules, site): (Arc<[Rule]>, Arc<str>) = (rules.into(), site.into());
     let limit = Arc::new(Semaphore::new(CONCURRENCY));
     let mut checks = JoinSet::new();
     for article in articles {
@@ -79,17 +84,17 @@ pub async fn filter_saved(db: &Db, jev: &Jev, feed: FeedId) -> Result<usize, DbE
         });
     }
 
-    let mut rejected = Vec::new();
+    let (mut hide, mut show) = (Vec::new(), Vec::new());
     while let Some(joined) = checks.join_next().await {
         match joined {
-            Ok((guid, Ok(false))) => rejected.push(guid),
-            Ok((_, Ok(true))) => {}
+            Ok((guid, Ok(false))) => hide.push(guid),
+            Ok((guid, Ok(true))) => show.push(guid),
             Ok((_, Err(error))) => {
                 tracing::warn!(%error, "could not check a saved article against the feed's rules");
             }
             Err(error) => tracing::error!(%error, "rule check task failed"),
         }
     }
-    db.hide_articles(feed, &rejected).await?;
-    Ok(rejected.len())
+    let (hidden, shown) = db.set_hidden(feed, &hide, &show).await?;
+    Ok(Changed { hidden, shown })
 }

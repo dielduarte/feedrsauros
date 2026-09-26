@@ -24,14 +24,10 @@ impl Db {
             .collect())
     }
 
-    /// Replaces the feed's rules with `rules`, in that order. What earlier rules kept out is
-    /// forgotten, so the next fetch judges those articles again under the new rules.
+    /// Replaces the feed's rules with `rules`, in that order.
     pub async fn set_rules(&self, feed: FeedId, rules: &[Rule]) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query!("DELETE FROM feed_rules WHERE feed_id = ?", feed)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query!("DELETE FROM filtered_items WHERE feed_id = ?", feed)
             .execute(&mut *tx)
             .await?;
         for (position, rule) in rules.iter().enumerate() {
@@ -54,41 +50,15 @@ impl Db {
         Ok(())
     }
 
-    /// Guids of articles already stored or already kept out by a rule.
+    /// Guids of the feed's stored articles, hidden ones included: each is judged once on arrival.
     pub async fn known_guids(&self, feed: FeedId) -> Result<HashSet<String>, DbError> {
-        Ok(sqlx::query_scalar!(
-            "SELECT guid FROM items WHERE feed_id = ?1 UNION SELECT guid FROM filtered_items WHERE feed_id = ?1",
-            feed
-        )
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .collect())
-    }
-
-    pub async fn filtered_guids(&self, feed: FeedId) -> Result<HashSet<String>, DbError> {
         Ok(
-            sqlx::query_scalar!("SELECT guid FROM filtered_items WHERE feed_id = ?", feed)
+            sqlx::query_scalar!("SELECT guid FROM items WHERE feed_id = ?", feed)
                 .fetch_all(&self.pool)
                 .await?
                 .into_iter()
                 .collect(),
         )
-    }
-
-    pub async fn remember_filtered(&self, feed: FeedId, guids: &[&str]) -> Result<(), DbError> {
-        let mut tx = self.pool.begin().await?;
-        for guid in guids {
-            sqlx::query!(
-                "INSERT OR IGNORE INTO filtered_items (feed_id, guid) VALUES (?, ?)",
-                feed,
-                guid
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(())
     }
 }
 
@@ -100,9 +70,9 @@ pub struct SavedArticle {
 }
 
 impl Db {
-    /// The feed's own title and its stored articles, except starred ones, which stay whatever
-    /// the rules say.
-    pub async fn unstarred_articles(
+    /// The feed's own title and every stored article the rules may judge: hidden ones too, but
+    /// not starred ones, which stay whatever the rules say.
+    pub async fn judgeable_articles(
         &self,
         feed: FeedId,
     ) -> Result<(String, Vec<SavedArticle>), DbError> {
@@ -119,26 +89,48 @@ impl Db {
         Ok((site, articles))
     }
 
-    /// Takes stored articles out of the list and remembers them as kept out.
-    pub async fn hide_articles(&self, feed: FeedId, guids: &[String]) -> Result<(), DbError> {
+    /// Hides `hide` and brings back `show`. Returns how many of each actually changed.
+    pub async fn set_hidden(
+        &self,
+        feed: FeedId,
+        hide: &[String],
+        show: &[String],
+    ) -> Result<(u64, u64), DbError> {
         let mut tx = self.pool.begin().await?;
-        for guid in guids {
-            sqlx::query!(
-                "DELETE FROM items WHERE feed_id = ? AND guid = ? AND starred_at IS NULL",
+        let (mut hidden, mut shown) = (0, 0);
+        for guid in hide {
+            hidden += sqlx::query!(
+                "UPDATE items SET hidden_at = unixepoch()
+                 WHERE feed_id = ? AND guid = ? AND hidden_at IS NULL AND starred_at IS NULL",
                 feed,
                 guid
             )
             .execute(&mut *tx)
-            .await?;
-            sqlx::query!(
-                "INSERT OR IGNORE INTO filtered_items (feed_id, guid) VALUES (?, ?)",
+            .await?
+            .rows_affected();
+        }
+        for guid in show {
+            shown += sqlx::query!(
+                "UPDATE items SET hidden_at = NULL WHERE feed_id = ? AND guid = ? AND hidden_at IS NOT NULL",
                 feed,
                 guid
             )
             .execute(&mut *tx)
-            .await?;
+            .await?
+            .rows_affected();
         }
         tx.commit().await?;
-        Ok(())
+        Ok((hidden, shown))
+    }
+
+    /// Brings back every hidden article, e.g. once a feed has no rules left.
+    pub async fn show_all(&self, feed: FeedId) -> Result<u64, DbError> {
+        Ok(sqlx::query!(
+            "UPDATE items SET hidden_at = NULL WHERE feed_id = ? AND hidden_at IS NOT NULL",
+            feed
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected())
     }
 }

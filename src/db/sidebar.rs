@@ -47,7 +47,7 @@ impl Db {
         let rows = sqlx::query!(
             r#"SELECT id AS "id: FeedId", slug, folder_id AS "folder_id: FolderId",
                       COALESCE(custom_title, title) AS "title!: String", url, site_url, last_error,
-                      (SELECT COUNT(*) FROM items WHERE items.feed_id = feeds.id AND read_at IS NULL) AS "unread!: u32"
+                      (SELECT COUNT(*) FROM items WHERE items.feed_id = feeds.id AND read_at IS NULL AND hidden_at IS NULL) AS "unread!: u32"
                FROM feeds
                ORDER BY position, id"#
         )

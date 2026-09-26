@@ -46,10 +46,11 @@ pub enum PollerEvent {
     BatchFinished {
         health: BatchHealth,
     },
-    /// New rules took articles already in the list out of it.
+    /// Changed rules hid or brought back articles the feed had already stored.
     FeedFiltered {
         feed: String,
-        hidden: usize,
+        hidden: u64,
+        shown: u64,
     },
     /// Something the stream didn't report changed the data, e.g. the CLI wrote to the database
     /// or this client fell behind; reload everything.
@@ -380,11 +381,12 @@ async fn record_success(
 ) -> Result<(), DbError> {
     let new_items = match fetched {
         Fetched::Updated {
-            feed: mut parsed,
+            feed: parsed,
             validators,
             moved_to,
         } => {
-            filter::filter_new(db, jev, feed, &mut parsed).await?;
+            // Judged before storing, while it's still clear which articles are new.
+            let rejected = filter::rejected_new(db, jev, feed, &parsed).await?;
             let published: Vec<_> = parsed.items.iter().map(|i| i.published_at).collect();
             let next = next_fetch_at(
                 Attempt::Succeeded,
@@ -396,7 +398,8 @@ async fn record_success(
                 feed: &parsed,
                 validators,
             };
-            let new_items = db.record_fetch(feed.id, record, now, next).await?;
+            let stored = db.record_fetch(feed.id, record, now, next).await?;
+            let (hidden, _) = db.set_hidden(feed.id, &rejected, &[]).await?;
             if let Some(url) = moved_to {
                 match db.update_feed_url(feed.id, &url).await {
                     Err(DbError::AlreadyExists) => {
@@ -405,7 +408,7 @@ async fn record_success(
                     other => other?,
                 }
             }
-            new_items
+            stored.saturating_sub(hidden)
         }
         Fetched::NotModified => {
             let published = db.recent_publish_times(feed.id, HISTORY).await?;

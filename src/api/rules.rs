@@ -3,9 +3,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
 use super::{ApiError, AppState};
-use crate::filter::filter_saved;
+use crate::filter::{Changed, reapply};
 use crate::jev::Jev;
-use crate::model::FeedScope;
 use crate::poller::PollerEvent;
 use crate::rules::Rule;
 
@@ -51,17 +50,23 @@ pub async fn replace(
     let jev = Jev::from_settings(&state.db, state.typesafe.clone()).await?;
     let (db, poller) = (state.db.clone(), state.poller.clone());
     tokio::spawn(async move {
-        // New rules go over the articles already in the list once. This finishes before the
-        // fetch below, which would otherwise store again what it takes out.
-        if let Some(jev) = jev {
-            match filter_saved(&db, &jev, feed).await {
-                Ok(hidden) => poller.announce(PollerEvent::FeedFiltered { feed: slug, hidden }),
-                Err(error) => tracing::warn!(%error, "could not apply new rules to saved articles"),
-            }
-        }
-        // Articles the old rules kept out are judged again by the new ones on this fetch.
-        if let Err(error) = poller.refresh(FeedScope::Feed(feed)).await {
-            tracing::warn!(%error, "could not refresh a feed after its rules changed");
+        // With no rules left everything comes back, which needs no judging. Otherwise the new
+        // rules go over the whole feed once, while AI features are on.
+        let changed = match (rules.is_empty(), jev) {
+            (true, _) => db
+                .show_all(feed)
+                .await
+                .map(|shown| Changed { hidden: 0, shown }),
+            (false, Some(jev)) => reapply(&db, &jev, feed).await,
+            (false, None) => return,
+        };
+        match changed {
+            Ok(Changed { hidden, shown }) => poller.announce(PollerEvent::FeedFiltered {
+                feed: slug,
+                hidden,
+                shown,
+            }),
+            Err(error) => tracing::warn!(%error, "could not apply changed rules to saved articles"),
         }
     });
     Ok(StatusCode::NO_CONTENT)

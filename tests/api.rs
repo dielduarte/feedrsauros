@@ -1187,7 +1187,53 @@ mod rules_on_saved_articles {
     }
 
     #[tokio::test]
-    async fn bring_back_what_a_removed_rule_hid() {
+    async fn bring_back_everything_when_the_rules_are_removed_without_asking_jev() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        api.turn_on_ai().await;
+        api.jev.matches_title("First post");
+        save_rules(&api, &feed, HIDE_FIRST).await;
+        eventually("the first post is filtered out", async || {
+            titles(&api, &feed).await.len() == 3
+        })
+        .await;
+        let asked = api.jev.requests().len();
+
+        save_rules(&api, &feed, "[]").await;
+
+        eventually("the first post is back", async || {
+            titles(&api, &feed).await.len() == 4
+        })
+        .await;
+        assert_eq!(api.jev.requests().len(), asked);
+    }
+
+    #[tokio::test]
+    async fn keep_hidden_articles_rather_than_deleting_them() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        let first = api
+            .items(&format!("?feed={feed}"))
+            .await
+            .into_iter()
+            .find(|item| item["title"] == "First post")
+            .unwrap();
+        api.turn_on_ai().await;
+        api.jev.matches_title("First post");
+
+        save_rules(&api, &feed, HIDE_FIRST).await;
+        eventually("the first post is filtered out", async || {
+            titles(&api, &feed).await.len() == 3
+        })
+        .await;
+
+        let (status, article) = api.get(&Api::item_path(&first)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(article["title"], "First post");
+    }
+
+    #[tokio::test]
+    async fn judge_hidden_articles_again_when_the_rules_change() {
         let api = start().await;
         let feed = api.subscribe("a.xml", None).await;
         api.turn_on_ai().await;
@@ -1198,10 +1244,18 @@ mod rules_on_saved_articles {
         })
         .await;
 
-        save_rules(&api, &feed, "[]").await;
+        api.jev.matches_title("Second post");
+        save_rules(
+            &api,
+            &feed,
+            r#"[{ "condition": "second posts", "action": "hide" }]"#,
+        )
+        .await;
 
-        eventually("the first post is back", async || {
-            titles(&api, &feed).await.len() == 4
+        eventually("the rules swap which post is hidden", async || {
+            let titles = titles(&api, &feed).await;
+            titles.contains(&"First post".to_string())
+                && !titles.contains(&"Second post".to_string())
         })
         .await;
     }

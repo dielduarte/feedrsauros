@@ -128,7 +128,7 @@ impl Db {
                     items.url, items.title, items.author, items.summary, items.published_at, items.fetched_at,
                     items.read_at, items.starred_at
              FROM items JOIN feeds ON feeds.id = items.feed_id
-             WHERE 1 = 1",
+             WHERE items.hidden_at IS NULL",
         );
         push_scope(&mut sql, query.scope);
         if query.unread_only {
@@ -243,7 +243,8 @@ impl Db {
         seen_until: DateTime<Utc>,
     ) -> Result<u64, DbError> {
         let mut sql = QueryBuilder::new(
-            "UPDATE items SET read_at = unixepoch() WHERE items.read_at IS NULL AND items.fetched_at <= ",
+            // Hidden articles stay unread, so they come back unread if the rules let them through.
+            "UPDATE items SET read_at = unixepoch() WHERE items.read_at IS NULL AND items.hidden_at IS NULL AND items.fetched_at <= ",
         );
         sql.push_bind(ts(seen_until));
         push_scope(&mut sql, scope);

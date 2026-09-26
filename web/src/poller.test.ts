@@ -40,7 +40,7 @@ describe('articles filtered by new rules', () => {
     client.setQueryData(keys.sidebar, { total_unread: 4, total_starred: 0, folders: [], uncategorized: [] })
     client.setQueryData(keys.items({ kind: 'all' }, false), { pages: [], pageParams: [] })
 
-    applyEvent(client, { type: 'feed_filtered', feed: 'cloudflare-blog', hidden: 2 })
+    applyEvent(client, { type: 'feed_filtered', feed: 'cloudflare-blog', hidden: 2, shown: 1 })
 
     expect(client.getQueryState(keys.sidebar)?.isInvalidated).toBe(true)
     expect(client.getQueryState(keys.items({ kind: 'all' }, false))?.isInvalidated).toBe(true)

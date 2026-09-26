@@ -32,7 +32,8 @@ export function RulesPage({ chrome, feed }: Props) {
           <h1 className="text-[32px] leading-tight font-semibold tracking-[-0.025em]">Rules for {title}</h1>
           <p className="mt-2 max-w-[62ch] text-[15px] text-muted-foreground">
             Jev reads each new article from {title} and applies these rules before it reaches your list. When you
-            save new rules, Jev also goes through the articles already here once. Starred articles always stay.
+            change the rules, Jev goes through every article again, hidden ones too, and brings back any the new
+            rules let through. Nothing is deleted, and starred articles always stay.
           </p>
           {aiEnabled ? null : (
             <p className="mt-6 rounded-lg bg-secondary px-4 py-3 text-[14px]">
