@@ -81,6 +81,8 @@ export type PollerEvent =
   | { type: 'feed_refreshed'; feed: string; new_items: number }
   | { type: 'feed_failed'; feed: string; error: string }
   | { type: 'batch_finished'; health: 'online' | 'offline' }
+  /** New rules took articles already in a feed's list out of it. */
+  | { type: 'feed_filtered'; feed: string; hidden: number }
   | { type: 'resync' }
 
 export interface Renamed {

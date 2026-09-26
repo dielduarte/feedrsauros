@@ -13,10 +13,9 @@ use url::Url;
 
 use crate::db::{Db, DbError, Feed, FetchRecord};
 use crate::fetch::{FetchError, Fetched, Fetcher};
+use crate::filter;
 use crate::jev::Jev;
 use crate::model::FeedScope;
-use crate::parse::ParsedFeed;
-use crate::rules::keeps;
 use crate::schedule::{Attempt, HISTORY, adaptive_interval, next_fetch_at};
 
 pub const CONCURRENCY: usize = 8;
@@ -46,6 +45,11 @@ pub enum PollerEvent {
     },
     BatchFinished {
         health: BatchHealth,
+    },
+    /// New rules took articles already in the list out of it.
+    FeedFiltered {
+        feed: String,
+        hidden: usize,
     },
     /// Something the stream didn't report changed the data, e.g. the CLI wrote to the database
     /// or this client fell behind; reload everything.
@@ -83,6 +87,13 @@ impl PollerHandle {
         let scheduled = self.db.mark_due(scope, Utc::now()).await?;
         self.wake();
         Ok(scheduled)
+    }
+
+    /// Tells open event streams about something that happened outside a batch.
+    pub fn announce(&self, event: PollerEvent) {
+        if let Some(events) = self.events.upgrade() {
+            let _ = events.send(event);
+        }
     }
 
     /// Makes the poller re-check the schedule now, e.g. after feeds were added as due.
@@ -242,44 +253,6 @@ async fn watch_other_writers(
     }
 }
 
-/// Keeps out the new articles the feed's rules reject. Each article is judged once: whatever a
-/// rule kept out is remembered, and whatever was kept is stored. If Jev can't be reached, the
-/// article is kept, so AI never loses anything.
-async fn apply_rules(
-    db: &Db,
-    jev: Option<&Jev>,
-    feed: &Feed,
-    parsed: &mut ParsedFeed,
-) -> Result<(), DbError> {
-    let filtered = db.filtered_guids(feed.id).await?;
-    parsed.items.retain(|item| !filtered.contains(&item.guid));
-    let Some(jev) = jev else { return Ok(()) };
-    let rules = db.rules(feed.id).await?;
-    if rules.is_empty() {
-        return Ok(());
-    }
-
-    let known = db.known_guids(feed.id).await?;
-    let mut rejected: Vec<&str> = Vec::new();
-    for article in parsed
-        .items
-        .iter()
-        .filter(|item| !known.contains(&item.guid))
-    {
-        match jev.matches(&rules, &parsed.title, article).await {
-            Ok(matched) if !keeps(&rules, &matched) => rejected.push(&article.guid),
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(%error, feed = %feed.url, "could not check an article against the feed's rules");
-            }
-        }
-    }
-    db.remember_filtered(feed.id, &rejected).await?;
-    let rejected: HashSet<String> = rejected.into_iter().map(str::to_owned).collect();
-    parsed.items.retain(|item| !rejected.contains(&item.guid));
-    Ok(())
-}
-
 async fn time_until_next_due(db: &Db) -> Duration {
     match db.next_due_at().await {
         Ok(Some(at)) => (at - Utc::now()).to_std().unwrap_or(Duration::ZERO),
@@ -411,7 +384,7 @@ async fn record_success(
             validators,
             moved_to,
         } => {
-            apply_rules(db, jev, feed, &mut parsed).await?;
+            filter::filter_new(db, jev, feed, &mut parsed).await?;
             let published: Vec<_> = parsed.items.iter().map(|i| i.published_at).collect();
             let next = next_fetch_at(
                 Attempt::Succeeded,

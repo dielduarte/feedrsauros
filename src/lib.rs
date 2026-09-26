@@ -4,6 +4,7 @@ pub mod cli;
 pub mod db;
 pub mod discover;
 pub mod fetch;
+pub mod filter;
 pub mod jev;
 pub mod model;
 pub mod opml;

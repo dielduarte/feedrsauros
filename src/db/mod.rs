@@ -17,6 +17,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 pub use feeds::{Feed, FetchRecord, NewFeed};
 pub use folders::Folder;
 pub use items::{Cursor, Item, ItemQuery, ItemScope, ItemSummary, Page};
+pub use rules::SavedArticle;
 pub use settings::Settings;
 pub use sidebar::{Sidebar, SidebarFeed, SidebarFolder};
 

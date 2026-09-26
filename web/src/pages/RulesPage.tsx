@@ -31,8 +31,8 @@ export function RulesPage({ chrome, feed }: Props) {
         <div className="mx-auto max-w-190 px-8 pt-11 pb-24 max-md:px-5">
           <h1 className="text-[32px] leading-tight font-semibold tracking-[-0.025em]">Rules for {title}</h1>
           <p className="mt-2 max-w-[62ch] text-[15px] text-muted-foreground">
-            Jev reads each new article from {title} and applies these rules before it reaches your list. Articles
-            already in your list stay as they are.
+            Jev reads each new article from {title} and applies these rules before it reaches your list. When you
+            save new rules, Jev also goes through the articles already here once. Starred articles always stay.
           </p>
           {aiEnabled ? null : (
             <p className="mt-6 rounded-lg bg-secondary px-4 py-3 text-[14px]">
@@ -49,7 +49,7 @@ export function RulesPage({ chrome, feed }: Props) {
             <DinoLoader label="Loading the rules…" />
           ) : (
             // Keyed by feed so moving to another feed's rules starts from its saved list.
-            <RulesEditor key={feed} feed={feed} saved={rules} />
+            <RulesEditor key={feed} feed={feed} saved={rules} aiEnabled={aiEnabled} />
           )}
         </div>
       </div>
@@ -60,7 +60,7 @@ export function RulesPage({ chrome, feed }: Props) {
 /** A rule being edited, with a key that stays put while rows are added and removed. */
 type Draft = Rule & { key: number }
 
-function RulesEditor({ feed, saved }: { feed: string; saved: Rule[] }) {
+function RulesEditor({ feed, saved, aiEnabled }: { feed: string; saved: Rule[]; aiEnabled: boolean }) {
   const [rules, setRules] = useState<Draft[]>(() => saved.map((rule, key) => ({ ...rule, key })))
   const nextKey = useRef(saved.length)
   const addRule = () => setRules((current) => [...current, { condition: '', action: 'hide', key: nextKey.current++ }])
@@ -74,7 +74,7 @@ function RulesEditor({ feed, saved }: { feed: string; saved: Rule[] }) {
     event.preventDefault()
     save.mutate(
       rules.map(({ condition, action }) => ({ condition: condition.trim(), action })),
-      { onSuccess: () => toast('Rules saved') },
+      { onSuccess: () => toast(aiEnabled ? 'Rules saved. Jev is checking the articles already here.' : 'Rules saved') },
     )
   }
 

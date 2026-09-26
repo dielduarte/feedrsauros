@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyEvent, nextBatchDone, serverPoller } from './poller'
+import { keys } from './queries'
 
 let client: QueryClient
 
@@ -31,6 +32,18 @@ describe('server poller status', () => {
 
     applyEvent(client, { type: 'batch_finished', health: 'offline' })
     expect(serverPoller(client)).toEqual({ running: false, offline: true })
+  })
+})
+
+describe('articles filtered by new rules', () => {
+  it('reload the sidebar and every list', () => {
+    client.setQueryData(keys.sidebar, { total_unread: 4, total_starred: 0, folders: [], uncategorized: [] })
+    client.setQueryData(keys.items({ kind: 'all' }, false), { pages: [], pageParams: [] })
+
+    applyEvent(client, { type: 'feed_filtered', feed: 'cloudflare-blog', hidden: 2 })
+
+    expect(client.getQueryState(keys.sidebar)?.isInvalidated).toBe(true)
+    expect(client.getQueryState(keys.items({ kind: 'all' }, false))?.isInvalidated).toBe(true)
   })
 })
 

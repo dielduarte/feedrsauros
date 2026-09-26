@@ -36,6 +36,10 @@ export function applyEvent(client: QueryClient, event: PollerEvent) {
       client.invalidateQueries({ queryKey: keys.sidebar })
       client.invalidateQueries({ queryKey: keys.allItems })
       break
+    case 'feed_filtered':
+      client.invalidateQueries({ queryKey: keys.sidebar })
+      client.invalidateQueries({ queryKey: keys.allItems })
+      break
     case 'resync':
       client.invalidateQueries()
       break

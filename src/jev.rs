@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use url::Url;
 
 use crate::db::{Db, DbError, Folder, SidebarFolder};
-use crate::parse::{NewItem, ParsedFeed};
+use crate::parse::ParsedFeed;
 use crate::rules::Rule;
 
 /// TypeSafe's evaluation endpoint, where Jev runs.
@@ -31,6 +31,7 @@ pub enum JevError {
 }
 
 /// TypeSafe's Jev, for the few judgments feedrsauros needs.
+#[derive(Clone)]
 pub struct Jev {
     client: reqwest::Client,
     endpoint: Url,
@@ -69,12 +70,12 @@ impl Jev {
             .map(|f| f.folder.clone()))
     }
 
-    /// Whether `article` matches each rule's condition, in the rules' order.
+    /// Whether an article matches each rule's condition, in the rules' order.
     pub async fn matches(
         &self,
         rules: &[Rule],
         site: &str,
-        article: &NewItem,
+        article: Article<'_>,
     ) -> Result<Vec<bool>, JevError> {
         let reply: RuleReply = self.ask(&rules_request(rules, site, article)).await?;
         Ok((0..rules.len())
@@ -107,7 +108,14 @@ fn rule_id(index: usize) -> String {
     format!("rule_{index}")
 }
 
-fn rules_request(rules: &[Rule], site: &str, article: &NewItem) -> Value {
+/// What Jev reads of an article to judge it against rules.
+#[derive(Clone, Copy)]
+pub struct Article<'a> {
+    pub title: Option<&'a str>,
+    pub summary: Option<&'a str>,
+}
+
+fn rules_request(rules: &[Rule], site: &str, article: Article<'_>) -> Value {
     let questions: Map<String, Value> = rules
         .iter()
         .enumerate()

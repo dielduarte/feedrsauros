@@ -45,6 +45,8 @@ struct Api {
 struct FakeJev {
     requests: Mutex<Vec<(HeaderMap, Value)>>,
     reply: Mutex<Option<(StatusCode, Value)>>,
+    /// For rule questions: every rule matches the article with this title, and nothing else.
+    matching: Mutex<Option<String>>,
 }
 
 impl FakeJev {
@@ -72,6 +74,10 @@ impl FakeJev {
         ));
     }
 
+    fn matches_title(&self, title: &str) {
+        *self.matching.lock().unwrap() = Some(title.into());
+    }
+
     fn requests(&self) -> Vec<(HeaderMap, Value)> {
         self.requests.lock().unwrap().clone()
     }
@@ -82,7 +88,25 @@ async fn fake_jev(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
-    jev.requests.lock().unwrap().push((headers, body));
+    jev.requests.lock().unwrap().push((headers, body.clone()));
+    let questions = body["questions"].as_object().unwrap();
+    if !questions.contains_key("folder") {
+        let hit =
+            jev.matching.lock().unwrap().as_deref() == body["state"]["article"]["title"].as_str();
+        let answers: serde_json::Map<String, Value> = questions
+            .keys()
+            .map(|id| {
+                (
+                    id.clone(),
+                    json!({ "type": "noul", "noul": if hit { 0.97 } else { 0.03 } }),
+                )
+            })
+            .collect();
+        return (
+            axum::http::StatusCode::OK,
+            Json(json!({ "model": "jev-1.13.0", "answers": answers, "usage": {} })),
+        );
+    }
     let (status, reply) = jev.reply.lock().unwrap().clone().expect("no reply set");
     (
         axum::http::StatusCode::from_u16(status.as_u16()).unwrap(),
@@ -1020,5 +1044,132 @@ mod rules {
             api.get("api/feeds/nope/rules").await.0,
             StatusCode::NOT_FOUND
         );
+    }
+}
+
+mod rules_on_saved_articles {
+    use super::*;
+
+    const HIDE_FIRST: &str = r#"[{ "condition": "first posts", "action": "hide" }]"#;
+
+    async fn eventually(what: &str, check: impl AsyncFn() -> bool) {
+        for _ in 0..100 {
+            if check().await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("timed out waiting until {what}");
+    }
+
+    async fn titles(api: &Api, feed: &str) -> Vec<String> {
+        let mut titles = api.item_titles(&format!("?feed={feed}")).await;
+        titles.sort();
+        titles
+    }
+
+    async fn save_rules(api: &Api, feed: &str, rules: &str) {
+        let rules: Value = serde_json::from_str(rules).unwrap();
+        let (status, body) = api.put(&format!("api/feeds/{feed}/rules"), rules).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    }
+
+    #[tokio::test]
+    async fn remove_the_articles_new_rules_reject() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        api.turn_on_ai().await;
+        api.jev.matches_title("First post");
+
+        save_rules(&api, &feed, HIDE_FIRST).await;
+
+        eventually("the first post is filtered out", async || {
+            !titles(&api, &feed)
+                .await
+                .contains(&"First post".to_string())
+        })
+        .await;
+        assert_eq!(titles(&api, &feed).await.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn keep_starred_articles() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        let first = api
+            .items(&format!("?feed={feed}"))
+            .await
+            .into_iter()
+            .find(|item| item["title"] == "First post")
+            .unwrap();
+        api.patch(&Api::item_path(&first), json!({ "starred": true }))
+            .await;
+        api.turn_on_ai().await;
+        api.jev.matches_title("First post");
+
+        save_rules(&api, &feed, HIDE_FIRST).await;
+
+        eventually("every other article is judged", async || {
+            api.jev.requests().len() >= 3
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            titles(&api, &feed)
+                .await
+                .contains(&"First post".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn leave_articles_alone_while_ai_is_off() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+
+        save_rules(&api, &feed, HIDE_FIRST).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert_eq!(titles(&api, &feed).await.len(), 4);
+        assert!(api.jev.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn do_not_judge_again_when_the_rules_are_unchanged() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        api.turn_on_ai().await;
+        api.jev.matches_title("First post");
+        save_rules(&api, &feed, HIDE_FIRST).await;
+        eventually("the first pass is done", async || {
+            titles(&api, &feed).await.len() == 3
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let asked = api.jev.requests().len();
+
+        save_rules(&api, &feed, HIDE_FIRST).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert_eq!(api.jev.requests().len(), asked);
+    }
+
+    #[tokio::test]
+    async fn bring_back_what_a_removed_rule_hid() {
+        let api = start().await;
+        let feed = api.subscribe("a.xml", None).await;
+        api.turn_on_ai().await;
+        api.jev.matches_title("First post");
+        save_rules(&api, &feed, HIDE_FIRST).await;
+        eventually("the first post is filtered out", async || {
+            titles(&api, &feed).await.len() == 3
+        })
+        .await;
+
+        save_rules(&api, &feed, "[]").await;
+
+        eventually("the first post is back", async || {
+            titles(&api, &feed).await.len() == 4
+        })
+        .await;
     }
 }

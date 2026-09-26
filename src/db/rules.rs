@@ -24,10 +24,14 @@ impl Db {
             .collect())
     }
 
-    /// Replaces the feed's rules with `rules`, in that order.
+    /// Replaces the feed's rules with `rules`, in that order. What earlier rules kept out is
+    /// forgotten, so the next fetch judges those articles again under the new rules.
     pub async fn set_rules(&self, feed: FeedId, rules: &[Rule]) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query!("DELETE FROM feed_rules WHERE feed_id = ?", feed)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query!("DELETE FROM filtered_items WHERE feed_id = ?", feed)
             .execute(&mut *tx)
             .await?;
         for (position, rule) in rules.iter().enumerate() {
@@ -75,6 +79,57 @@ impl Db {
     pub async fn remember_filtered(&self, feed: FeedId, guids: &[&str]) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         for guid in guids {
+            sqlx::query!(
+                "INSERT OR IGNORE INTO filtered_items (feed_id, guid) VALUES (?, ?)",
+                feed,
+                guid
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+/// A stored article, as much of it as a rule needs.
+pub struct SavedArticle {
+    pub guid: String,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+}
+
+impl Db {
+    /// The feed's own title and its stored articles, except starred ones, which stay whatever
+    /// the rules say.
+    pub async fn unstarred_articles(
+        &self,
+        feed: FeedId,
+    ) -> Result<(String, Vec<SavedArticle>), DbError> {
+        let site = sqlx::query_scalar!("SELECT title FROM feeds WHERE id = ?", feed)
+            .fetch_one(&self.pool)
+            .await?;
+        let articles = sqlx::query_as!(
+            SavedArticle,
+            "SELECT guid, title, summary FROM items WHERE feed_id = ? AND starred_at IS NULL",
+            feed
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok((site, articles))
+    }
+
+    /// Takes stored articles out of the list and remembers them as kept out.
+    pub async fn hide_articles(&self, feed: FeedId, guids: &[String]) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        for guid in guids {
+            sqlx::query!(
+                "DELETE FROM items WHERE feed_id = ? AND guid = ? AND starred_at IS NULL",
+                feed,
+                guid
+            )
+            .execute(&mut *tx)
+            .await?;
             sqlx::query!(
                 "INSERT OR IGNORE INTO filtered_items (feed_id, guid) VALUES (?, ?)",
                 feed,
