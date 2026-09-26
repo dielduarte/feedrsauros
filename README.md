@@ -80,6 +80,8 @@ For example, `FEEDRSAUROS_PORT=8080 docker compose up -d` serves feedrsauros on 
 
 ## Development
 
+How the pieces fit together (backend, web app, desktop app, data model, filters, releases) is in [docs/architecture.md](docs/architecture.md).
+
 ```bash
 cargo test                    # backend tests
 pnpm --dir web test           # frontend unit tests
